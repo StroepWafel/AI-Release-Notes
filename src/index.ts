@@ -169,6 +169,57 @@ function getChangedFiles(previousCommit: string | null, currentTag: string): str
   }
 }
 
+function getContributors(previousCommit: string | null, currentTag: string): { current: Set<string>; previous: Set<string> } {
+  try {
+    // Get the commit SHA that the current tag points to
+    let currentCommit: string;
+    try {
+      currentCommit = execSync(`git rev-parse ${currentTag}`, { encoding: 'utf-8' }).trim();
+    } catch {
+      // If tag doesn't exist, use HEAD
+      currentCommit = execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
+    }
+
+    // Get contributors from commits in this release
+    let currentContributors = new Set<string>();
+    try {
+      const currentCommits = previousCommit
+        ? execSync(`git log ${previousCommit}..${currentCommit} --pretty=format:"%an"`, { encoding: 'utf-8' })
+        : execSync(`git log ${currentCommit} --pretty=format:"%an"`, { encoding: 'utf-8' });
+      
+      currentCommits.split('\n').forEach(name => {
+        const trimmed = name.trim();
+        if (trimmed) {
+          currentContributors.add(trimmed);
+        }
+      });
+    } catch (error) {
+      core.warning(`Could not get current contributors: ${error}`);
+    }
+
+    // Get contributors from previous releases (all commits before previous commit)
+    let previousContributors = new Set<string>();
+    if (previousCommit) {
+      try {
+        const previousCommits = execSync(`git log ${previousCommit} --pretty=format:"%an"`, { encoding: 'utf-8' });
+        previousCommits.split('\n').forEach(name => {
+          const trimmed = name.trim();
+          if (trimmed) {
+            previousContributors.add(trimmed);
+          }
+        });
+      } catch (error) {
+        core.warning(`Could not get previous contributors: ${error}`);
+      }
+    }
+
+    return { current: currentContributors, previous: previousContributors };
+  } catch (error) {
+    core.warning(`Could not get contributors: ${error}`);
+    return { current: new Set(), previous: new Set() };
+  }
+}
+
 async function generateReleaseNotes(
   groqClient: Groq,
   model: string,
@@ -177,6 +228,7 @@ async function generateReleaseNotes(
   changedFiles: string,
   tagName: string,
   previousTag: string | null,
+  newContributors: string[],
   template?: string
 ): Promise<string> {
   // Truncate long outputs to avoid token limits
@@ -212,7 +264,8 @@ Based ONLY on the information above, generate release notes in markdown format. 
 2. **Improvements** - Only if existing features were enhanced
 3. **Bug Fixes** - Only if bugs were explicitly fixed
 4. **Breaking Changes** - Only if there are actual breaking changes (rare, usually omit)
-5. **Other** - Any other notable changes
+5. **New Contributors** - List any new contributors who made commits in this release${newContributors.length > 0 ? `:\n${newContributors.map(c => `- ${c}`).join('\n')}` : ' (none)'}
+6. **Other** - Any other notable changes
 
 CRITICAL: 
 - Only mention changes that are clearly visible in the diff and commit messages
@@ -220,6 +273,7 @@ CRITICAL:
 - Do not infer or assume changes that aren't explicitly shown
 - Be concise and specific
 - Focus on user-visible changes when possible
+- Always include the New Contributors section if there are new contributors listed above
 
 ${template ? `\n**Template to follow:**\n${template}\n` : ''}
 
@@ -394,9 +448,17 @@ async function run(): Promise<void> {
     const commits = getCommitMessages(previousCommit, tagName);
     const changedFiles = getChangedFiles(previousCommit, tagName);
     
+    // Get contributors and identify new ones
+    core.info('Identifying new contributors...');
+    const contributors = getContributors(previousCommit, tagName);
+    const newContributors = Array.from(contributors.current).filter(
+      contributor => !contributors.previous.has(contributor)
+    );
+    
     // Log what we found
     core.info(`Found ${commits.split('\n').filter(c => c.trim()).length} commits`);
     core.info(`Changed files: ${changedFiles.split('\n').filter(f => f.trim()).length}`);
+    core.info(`New contributors: ${newContributors.length > 0 ? newContributors.join(', ') : 'None'}`);
 
     if (!commits && !diff) {
       core.warning('No commits or changes found. Creating release with default notes.');
@@ -412,6 +474,7 @@ async function run(): Promise<void> {
       changedFiles,
       tagName,
       previousTag,
+      newContributors,
       bodyTemplate
     );
 
