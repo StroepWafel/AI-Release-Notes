@@ -36,29 +36,7 @@ jobs:
       - name: Build action
         run: npm run package
 
-      - name: Check for changes
-        id: changes
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          
-          # Check if dist/ folder has changes
-          if [ -d "dist/" ]; then
-            if git diff --quiet HEAD dist/ 2>/dev/null; then
-              echo "has_changes=false" >> $GITHUB_OUTPUT
-              echo "No changes detected in dist/ folder"
-            else
-              echo "has_changes=true" >> $GITHUB_OUTPUT
-              echo "Changes detected in dist/ folder"
-              git diff --stat HEAD dist/ || true
-            fi
-          else
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-            echo "dist/ folder doesn't exist, will be created"
-          fi
-
       - name: Commit and push changes
-        if: steps.changes.outputs.has_changes == 'true'
         run: |
           git add dist/
           if git diff --staged --quiet; then
@@ -69,7 +47,6 @@ jobs:
           fi
 
       - name: Delete existing tag (if exists)
-        if: steps.changes.outputs.has_changes == 'true'
         run: |
           if git rev-parse "v1.0.0" >/dev/null 2>&1; then
             git tag -d v1.0.0 || true
@@ -77,13 +54,11 @@ jobs:
           fi
 
       - name: Create/Update tag v1.0.0
-        if: steps.changes.outputs.has_changes == 'true'
         run: |
           git tag -f v1.0.0 -m "Auto-updated release v1.0.0"
           git push origin v1.0.0 --force
 
       - name: Create or Update Release
-        if: steps.changes.outputs.has_changes == 'true'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v1.0.0
