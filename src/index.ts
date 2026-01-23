@@ -11,12 +11,18 @@ interface ReleaseNotesResponse {
   other: string[];
 }
 
-async function getPreviousTag(currentTag: string, previousTag?: string): Promise<{ tag: string | null; commit: string | null }> {
+async function getPreviousTag(
+  octokit: ReturnType<typeof github.getOctokit>,
+  owner: string,
+  repo: string,
+  currentTag: string,
+  previousTag?: string
+): Promise<{ tag: string | null; commit: string | null }> {
   try {
     let tagToUse: string | null = null;
     
     if (previousTag) {
-      // Verify the tag exists and get its commit SHA
+      // If explicitly provided, use it
       try {
         execSync(`git rev-parse --verify ${previousTag}`, { stdio: 'ignore' });
         tagToUse = previousTag;
@@ -25,18 +31,45 @@ async function getPreviousTag(currentTag: string, previousTag?: string): Promise
         return { tag: null, commit: null };
       }
     } else {
-      // Get all tags sorted by version
-      const tags = execSync('git tag --sort=-version:refname', { encoding: 'utf-8' })
-        .trim()
-        .split('\n')
-        .filter(tag => tag && tag !== currentTag);
+      // Try to get the latest release from GitHub API
+      try {
+        core.info('Fetching latest release from GitHub API...');
+        const releases = await octokit.rest.repos.listReleases({
+          owner,
+          repo,
+          per_page: 10 // Get first 10 releases to find one that's not the current tag
+        });
 
-      if (tags.length > 0) {
-        tagToUse = tags[0];
+        // Find the latest release that's not the current tag
+        const latestRelease = releases.data.find(release => release.tag_name !== currentTag);
+        
+        if (latestRelease) {
+          tagToUse = latestRelease.tag_name;
+          core.info(`Found latest release tag: ${tagToUse}`);
+        } else {
+          core.info('No previous release found via API, falling back to git tags');
+        }
+      } catch (apiError) {
+        core.warning(`Failed to fetch releases from GitHub API: ${apiError}. Falling back to git tags.`);
+      }
+
+      // Fallback to git tags if API didn't work or didn't find a release
+      if (!tagToUse) {
+        core.info('Using git tags as fallback...');
+        const tags = execSync('git tag --sort=-version:refname', { encoding: 'utf-8' })
+          .trim()
+          .split('\n')
+          .filter(tag => tag && tag !== currentTag);
+
+        if (tags.length > 0) {
+          tagToUse = tags[0];
+          core.info(`Found latest git tag: ${tagToUse}`);
+        }
       }
     }
 
     if (!tagToUse) {
+      core.info('No previous tag found');
       return { tag: null, commit: null };
     }
 
@@ -343,8 +376,11 @@ async function run(): Promise<void> {
     core.info('Fetching tags...');
     execSync('git fetch --tags --force', { stdio: 'inherit' });
 
+    // Get repository info
+    const { owner, repo } = github.context.repo;
+
     // Get previous tag and its commit SHA
-    const previousTagInfo = await getPreviousTag(tagName, previousTagInput || undefined);
+    const previousTagInfo = await getPreviousTag(octokit, owner, repo, tagName, previousTagInput || undefined);
     const previousTag = previousTagInfo.tag;
     const previousCommit = previousTagInfo.commit;
     core.info(`Previous tag: ${previousTag || 'None (first release)'}`);
