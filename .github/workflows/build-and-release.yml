@@ -24,6 +24,11 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Configure Git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -39,9 +44,6 @@ jobs:
       - name: Check for changes
         id: changes
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          
           # Check if dist/ folder has changes
           if [ -d "dist/" ]; then
             if git diff --quiet HEAD dist/ 2>/dev/null; then
