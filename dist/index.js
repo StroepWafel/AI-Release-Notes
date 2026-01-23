@@ -40427,11 +40427,11 @@ const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
 const child_process_1 = __nccwpck_require__(5317);
 const groq_sdk_1 = __importDefault(__nccwpck_require__(4105));
-async function getPreviousTag(currentTag, previousTag) {
+async function getPreviousTag(octokit, owner, repo, currentTag, previousTag) {
     try {
         let tagToUse = null;
         if (previousTag) {
-            // Verify the tag exists and get its commit SHA
+            // If explicitly provided, use it
             try {
                 (0, child_process_1.execSync)(`git rev-parse --verify ${previousTag}`, { stdio: 'ignore' });
                 tagToUse = previousTag;
@@ -40442,16 +40442,42 @@ async function getPreviousTag(currentTag, previousTag) {
             }
         }
         else {
-            // Get all tags sorted by version
-            const tags = (0, child_process_1.execSync)('git tag --sort=-version:refname', { encoding: 'utf-8' })
-                .trim()
-                .split('\n')
-                .filter(tag => tag && tag !== currentTag);
-            if (tags.length > 0) {
-                tagToUse = tags[0];
+            // Try to get the latest release from GitHub API
+            try {
+                core.info('Fetching latest release from GitHub API...');
+                const releases = await octokit.rest.repos.listReleases({
+                    owner,
+                    repo,
+                    per_page: 10 // Get first 10 releases to find one that's not the current tag
+                });
+                // Find the latest release that's not the current tag
+                const latestRelease = releases.data.find(release => release.tag_name !== currentTag);
+                if (latestRelease) {
+                    tagToUse = latestRelease.tag_name;
+                    core.info(`Found latest release tag: ${tagToUse}`);
+                }
+                else {
+                    core.info('No previous release found via API, falling back to git tags');
+                }
+            }
+            catch (apiError) {
+                core.warning(`Failed to fetch releases from GitHub API: ${apiError}. Falling back to git tags.`);
+            }
+            // Fallback to git tags if API didn't work or didn't find a release
+            if (!tagToUse) {
+                core.info('Using git tags as fallback...');
+                const tags = (0, child_process_1.execSync)('git tag --sort=-version:refname', { encoding: 'utf-8' })
+                    .trim()
+                    .split('\n')
+                    .filter(tag => tag && tag !== currentTag);
+                if (tags.length > 0) {
+                    tagToUse = tags[0];
+                    core.info(`Found latest git tag: ${tagToUse}`);
+                }
             }
         }
         if (!tagToUse) {
+            core.info('No previous tag found');
             return { tag: null, commit: null };
         }
         // Get the commit SHA that the tag points to
@@ -40715,8 +40741,10 @@ async function run() {
         // Fetch tags
         core.info('Fetching tags...');
         (0, child_process_1.execSync)('git fetch --tags --force', { stdio: 'inherit' });
+        // Get repository info
+        const { owner, repo } = github.context.repo;
         // Get previous tag and its commit SHA
-        const previousTagInfo = await getPreviousTag(tagName, previousTagInput || undefined);
+        const previousTagInfo = await getPreviousTag(octokit, owner, repo, tagName, previousTagInput || undefined);
         const previousTag = previousTagInfo.tag;
         const previousCommit = previousTagInfo.commit;
         core.info(`Previous tag: ${previousTag || 'None (first release)'}`);
