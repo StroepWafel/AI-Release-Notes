@@ -22,9 +22,9 @@ inputs:
     required: false
     default: 'false'
   model:
-    description: 'Groq model to use (default: llama-3.3-70b-versatile)'
+    description: 'Groq model to use (default: meta-llama/llama-4-maverick-17b-128e-instruct)'
     required: false
-    default: 'llama-3.3-70b-versatile'
+    default: 'meta-llama/llama-4-maverick-17b-128e-instruct'
   previous_tag:
     description: 'Previous tag to compare against (defaults to latest tag)'
     required: false

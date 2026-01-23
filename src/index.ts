@@ -316,7 +316,7 @@ async function run(): Promise<void> {
     const releaseName = core.getInput('release_name') || tagName;
     const draft = core.getBooleanInput('draft');
     const prerelease = core.getBooleanInput('prerelease');
-    const model = core.getInput('model') || 'llama-3.3-70b-versatile';
+    const model = core.getInput('model') || 'meta-llama/llama-4-maverick-17b-128e-instruct';
     const previousTagInput = core.getInput('previous_tag');
     const filesInput = core.getInput('files');
     const bodyTemplate = core.getInput('body_template');
