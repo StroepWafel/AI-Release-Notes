@@ -11,89 +11,125 @@ interface ReleaseNotesResponse {
   other: string[];
 }
 
-async function getPreviousTag(currentTag: string, previousTag?: string): Promise<string | null> {
+async function getPreviousTag(currentTag: string, previousTag?: string): Promise<{ tag: string | null; commit: string | null }> {
   try {
+    let tagToUse: string | null = null;
+    
     if (previousTag) {
-      // Verify the tag exists
-      execSync(`git rev-parse --verify ${previousTag}`, { stdio: 'ignore' });
-      return previousTag;
+      // Verify the tag exists and get its commit SHA
+      try {
+        execSync(`git rev-parse --verify ${previousTag}`, { stdio: 'ignore' });
+        tagToUse = previousTag;
+      } catch {
+        core.warning(`Previous tag ${previousTag} not found`);
+        return { tag: null, commit: null };
+      }
+    } else {
+      // Get all tags sorted by version
+      const tags = execSync('git tag --sort=-version:refname', { encoding: 'utf-8' })
+        .trim()
+        .split('\n')
+        .filter(tag => tag && tag !== currentTag);
+
+      if (tags.length > 0) {
+        tagToUse = tags[0];
+      }
     }
 
-    // Get all tags sorted by version
-    const tags = execSync('git tag --sort=-version:refname', { encoding: 'utf-8' })
-      .trim()
-      .split('\n')
-      .filter(tag => tag && tag !== currentTag);
+    if (!tagToUse) {
+      return { tag: null, commit: null };
+    }
 
-    return tags.length > 0 ? tags[0] : null;
+    // Get the commit SHA that the tag points to
+    const commitSha = execSync(`git rev-parse ${tagToUse}`, { encoding: 'utf-8' }).trim();
+    return { tag: tagToUse, commit: commitSha };
   } catch (error) {
     core.warning(`Could not find previous tag: ${error}`);
-    return null;
+    return { tag: null, commit: null };
   }
 }
 
-function getGitDiff(previousTag: string | null, currentTag: string): string {
+function getGitDiff(previousCommit: string | null, currentTag: string): string {
   try {
-    if (!previousTag) {
-      // If no previous tag, get all changes from the initial commit
-      return execSync('git diff --stat', { encoding: 'utf-8' });
-    }
-
-    // Check if current tag exists, if not use HEAD
-    let currentRef = currentTag;
+    // Get the commit SHA that the current tag points to
+    let currentCommit: string;
     try {
-      execSync(`git rev-parse --verify ${currentTag}`, { stdio: 'ignore' });
+      currentCommit = execSync(`git rev-parse ${currentTag}`, { encoding: 'utf-8' }).trim();
     } catch {
-      currentRef = 'HEAD';
+      // If tag doesn't exist, use HEAD
+      currentCommit = execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
     }
 
-    // Get diff between tags
-    return execSync(`git diff ${previousTag}..${currentRef} --stat`, { encoding: 'utf-8' });
+    if (!previousCommit) {
+      // If no previous commit, get diff from root to current
+      const stat = execSync(`git diff --stat ${currentCommit}`, { encoding: 'utf-8' });
+      // Also get a summary of what changed
+      const summary = execSync(`git log --oneline ${currentCommit} | head -20`, { encoding: 'utf-8' });
+      return `Summary:\n${summary}\n\nFile changes:\n${stat}`;
+    }
+
+    // Get diff between the two commits
+    // First get the stat summary
+    const stat = execSync(`git diff --stat ${previousCommit}..${currentCommit}`, { encoding: 'utf-8' });
+    
+    // Get a brief summary of actual code changes (limited to avoid token limits)
+    let codeDiff = '';
+    try {
+      // Get a sample of actual changes (first 50 lines of diff)
+      codeDiff = execSync(`git diff ${previousCommit}..${currentCommit} | head -50`, { encoding: 'utf-8' });
+    } catch {
+      // If that fails, just use stat
+    }
+    
+    return `File changes summary:\n${stat}\n\nSample code changes:\n${codeDiff || '(too large to display)'}`;
   } catch (error) {
     core.warning(`Could not get git diff: ${error}`);
     return '';
   }
 }
 
-function getCommitMessages(previousTag: string | null, currentTag: string): string {
+function getCommitMessages(previousCommit: string | null, currentTag: string): string {
   try {
-    // Check if current tag exists, if not use HEAD
-    let currentRef = currentTag;
+    // Get the commit SHA that the current tag points to
+    let currentCommit: string;
     try {
-      execSync(`git rev-parse --verify ${currentTag}`, { stdio: 'ignore' });
+      currentCommit = execSync(`git rev-parse ${currentTag}`, { encoding: 'utf-8' }).trim();
     } catch {
-      currentRef = 'HEAD';
+      // If tag doesn't exist, use HEAD
+      currentCommit = execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
     }
 
-    if (!previousTag) {
-      // If no previous tag, get all commits
-      return execSync(`git log --pretty=format:"%h - %s (%an)"`, { encoding: 'utf-8' });
+    if (!previousCommit) {
+      // If no previous commit, get all commits up to current
+      return execSync(`git log --pretty=format:"%h - %s (%an)" ${currentCommit}`, { encoding: 'utf-8' });
     }
 
-    // Get commit messages between tags
-    return execSync(`git log ${previousTag}..${currentRef} --pretty=format:"%h - %s (%an)"`, { encoding: 'utf-8' });
+    // Get commit messages between commits (exclusive of previous, inclusive of current)
+    return execSync(`git log ${previousCommit}..${currentCommit} --pretty=format:"%h - %s (%an)"`, { encoding: 'utf-8' });
   } catch (error) {
     core.warning(`Could not get commit messages: ${error}`);
     return '';
   }
 }
 
-function getChangedFiles(previousTag: string | null, currentTag: string): string {
+function getChangedFiles(previousCommit: string | null, currentTag: string): string {
   try {
-    // Check if current tag exists, if not use HEAD
-    let currentRef = currentTag;
+    // Get the commit SHA that the current tag points to
+    let currentCommit: string;
     try {
-      execSync(`git rev-parse --verify ${currentTag}`, { stdio: 'ignore' });
+      currentCommit = execSync(`git rev-parse ${currentTag}`, { encoding: 'utf-8' }).trim();
     } catch {
-      currentRef = 'HEAD';
+      // If tag doesn't exist, use HEAD
+      currentCommit = execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
     }
 
-    if (!previousTag) {
-      // If no previous tag, get all changed files
-      return execSync('git diff --name-only', { encoding: 'utf-8' });
+    if (!previousCommit) {
+      // If no previous commit, get all changed files up to current
+      return execSync(`git diff --name-only ${currentCommit}`, { encoding: 'utf-8' });
     }
 
-    return execSync(`git diff --name-only ${previousTag}..${currentRef}`, { encoding: 'utf-8' });
+    // Get changed files between commits
+    return execSync(`git diff --name-only ${previousCommit}..${currentCommit}`, { encoding: 'utf-8' });
   } catch (error) {
     core.warning(`Could not get changed files: ${error}`);
     return '';
@@ -110,36 +146,47 @@ async function generateReleaseNotes(
   previousTag: string | null,
   template?: string
 ): Promise<string> {
+  // Truncate long outputs to avoid token limits
+  const maxDiffLength = 2000;
+  const maxCommitsLength = 1000;
+  const truncatedDiff = diff.length > maxDiffLength ? diff.substring(0, maxDiffLength) + '\n... (truncated)' : diff;
+  const truncatedCommits = commits.length > maxCommitsLength ? commits.substring(0, maxCommitsLength) + '\n... (truncated)' : commits;
+  
   const prompt = `You are a technical writer creating release notes for a software project. 
 
-Based on the following information about code changes, generate comprehensive release notes in markdown format.
+IMPORTANT: Only include changes that are ACTUALLY present in the diff and commit messages below. Do not make up or infer changes that aren't explicitly shown.
 
 **Current Release Tag:** ${tagName}
 **Previous Release Tag:** ${previousTag || 'N/A (first release)'}
 
-**Changed Files:**
+**Changed Files (only files that actually changed):**
 \`\`\`
-${changedFiles}
-\`\`\`
-
-**Git Diff Summary:**
-\`\`\`
-${diff}
+${changedFiles || 'No files changed'}
 \`\`\`
 
-**Commit Messages:**
+**Git Diff Summary (showing only what changed between releases):**
 \`\`\`
-${commits}
+${truncatedDiff || 'No changes detected'}
 \`\`\`
 
-Please generate release notes that include:
-1. **Features** - New functionality added
-2. **Improvements** - Enhancements to existing features
-3. **Bug Fixes** - Issues that were resolved
-4. **Breaking Changes** - If any (only include if there are actual breaking changes)
+**Commit Messages (only commits between the two releases):**
+\`\`\`
+${truncatedCommits || 'No commits'}
+\`\`\`
+
+Based ONLY on the information above, generate release notes in markdown format. Include:
+1. **Features** - Only if new functionality was actually added (based on commit messages and file changes)
+2. **Improvements** - Only if existing features were enhanced
+3. **Bug Fixes** - Only if bugs were explicitly fixed
+4. **Breaking Changes** - Only if there are actual breaking changes (rare, usually omit)
 5. **Other** - Any other notable changes
 
-Format the output as clean markdown. Be specific about what changed based on the commit messages and file changes. If there are no changes in a category, omit that section.
+CRITICAL: 
+- Only mention changes that are clearly visible in the diff and commit messages
+- If a category has no changes, completely omit that section
+- Do not infer or assume changes that aren't explicitly shown
+- Be concise and specific
+- Focus on user-visible changes when possible
 
 ${template ? `\n**Template to follow:**\n${template}\n` : ''}
 
@@ -296,15 +343,24 @@ async function run(): Promise<void> {
     core.info('Fetching tags...');
     execSync('git fetch --tags --force', { stdio: 'inherit' });
 
-    // Get previous tag
-    const previousTag = await getPreviousTag(tagName, previousTagInput || undefined);
+    // Get previous tag and its commit SHA
+    const previousTagInfo = await getPreviousTag(tagName, previousTagInput || undefined);
+    const previousTag = previousTagInfo.tag;
+    const previousCommit = previousTagInfo.commit;
     core.info(`Previous tag: ${previousTag || 'None (first release)'}`);
+    if (previousCommit) {
+      core.info(`Previous commit: ${previousCommit.substring(0, 7)}`);
+    }
 
-    // Get git information
+    // Get git information using commit SHAs for accurate diffing
     core.info('Collecting git information...');
-    const diff = getGitDiff(previousTag, tagName);
-    const commits = getCommitMessages(previousTag, tagName);
-    const changedFiles = getChangedFiles(previousTag, tagName);
+    const diff = getGitDiff(previousCommit, tagName);
+    const commits = getCommitMessages(previousCommit, tagName);
+    const changedFiles = getChangedFiles(previousCommit, tagName);
+    
+    // Log what we found
+    core.info(`Found ${commits.split('\n').filter(c => c.trim()).length} commits`);
+    core.info(`Changed files: ${changedFiles.split('\n').filter(f => f.trim()).length}`);
 
     if (!commits && !diff) {
       core.warning('No commits or changes found. Creating release with default notes.');
