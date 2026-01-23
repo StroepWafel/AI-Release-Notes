@@ -1,0 +1,33 @@
+{
+  "name": "ai-release-notes",
+  "version": "1.0.0",
+  "description": "GitHub Action to generate AI-powered release notes using Groq",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "package": "ncc build src/index.ts -o dist --source-map --license licenses.txt",
+    "test": "jest"
+  },
+  "keywords": [
+    "github-action",
+    "release-notes",
+    "ai",
+    "groq"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@actions/core": "^1.10.1",
+    "@actions/github": "^6.0.0",
+    "groq-sdk": "^0.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "eslint": "^8.54.0",
+    "typescript": "^5.3.2",
+    "@vercel/ncc": "^0.38.1"
+  }
+}
+
