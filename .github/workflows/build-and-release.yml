@@ -87,7 +87,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v1.0.0
-          name: AI Release Notes Generator v1.0.0
+          name: v1.0.0
           body: |
             ## Auto-updated Release
             
