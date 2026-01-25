@@ -239,7 +239,8 @@ async function generateReleaseNotes(
   
   const prompt = `You are a technical writer creating release notes for a software project. 
 
-IMPORTANT: Only include changes that are ACTUALLY present in the diff and commit messages below. Do not make up or infer changes that aren't explicitly shown.
+IMPORTANT: Only list changes that are explicitly present in the diffs and commit messages below. Do not invent, assume, or infer changes that are not directly shown. Every change included must be directly relevant to the released program itself.
+For example, do not mention documentation, README, CI, or workflow updates unless they materially affect the contents or behavior of the release.
 
 **Current Release Tag:** ${tagName}
 **Previous Release Tag:** ${previousTag || 'N/A (first release)'}
