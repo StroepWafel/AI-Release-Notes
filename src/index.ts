@@ -13,7 +13,7 @@ interface ReleaseNotesResponse {
 
 /**
  * Parse tag for x.x.x-channel format (semantic versioning with channel).
- * Returns { version, channel } or null if not in that format.
+ * Returns { version, channel } or null if not in that format. 
  */
 function parseTagWithChannel(tag: string): { version: string; channel: string } | null {
   const match = tag.match(/^(.+)-([A-Za-z]+)$/);
