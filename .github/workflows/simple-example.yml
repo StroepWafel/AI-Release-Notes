@@ -1,31 +1,57 @@
 # Simple example workflow - Copy this to your project's .github/workflows/ directory
-name: Create Release
+# Works with ANY repo: checkout uses the repo where this workflow runs
+# Supports both: (from_tag + to_tag) OR legacy (version only, auto-detects previous)
+name: Create Release Notes
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version number (e.g., 1.0.0)'
-        required: true
+        description: 'Version (legacy; e.g., 1.0.0) - auto-detects previous release'
+        required: false
+        type: string
+      from_tag:
+        description: 'Previous tag to compare from (e.g., v1.0.0) - use with to_tag'
+        required: false
+        type: string
+      to_tag:
+        description: 'Release tag to generate notes for (e.g., v2.0.0) - use with from_tag'
+        required: false
         type: string
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # IMPORTANT: Required to fetch all git history
+          fetch-depth: 0  # Required to fetch all git history and tags
+
+      - name: Determine tags
+        id: tags
+        run: |
+          if [ -n "${{ github.event.inputs.from_tag }}" ] && [ -n "${{ github.event.inputs.to_tag }}" ]; then
+            echo "tag_name=${{ github.event.inputs.to_tag }}" >> $GITHUB_OUTPUT
+            echo "previous_tag=${{ github.event.inputs.from_tag }}" >> $GITHUB_OUTPUT
+          elif [ -n "${{ github.event.inputs.version }}" ]; then
+            ver="${{ github.event.inputs.version }}"
+            [[ "$ver" == v* ]] || ver="v$ver"
+            echo "tag_name=$ver" >> $GITHUB_OUTPUT
+            echo "previous_tag=" >> $GITHUB_OUTPUT
+          else
+            echo "Provide either (from_tag AND to_tag) OR version"
+            exit 1
+          fi
 
       - name: Generate and Create Release
         id: release
-        # Replace YOUR_USERNAME/ai-release-notes@v1.0.0 with your action repository
-        uses: YOUR_USERNAME/ai-release-notes@v1.0.0
+        uses: StroepWafel/AI-Release-Notes@v1.0.0
         with:
           groq_api_key: ${{ secrets.GROQ_API_KEY }}
-          tag_name: v${{ github.event.inputs.version }}
-          release_name: Release v${{ github.event.inputs.version }}
+          tag_name: ${{ steps.tags.outputs.tag_name }}
+          previous_tag: ${{ steps.tags.outputs.previous_tag }}
+          release_name: ${{ steps.tags.outputs.tag_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

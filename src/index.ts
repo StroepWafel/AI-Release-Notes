@@ -11,6 +11,28 @@ interface ReleaseNotesResponse {
   other: string[];
 }
 
+/**
+ * Parse tag for x.x.x-channel format (semantic versioning with channel).
+ * Returns { version, channel } or null if not in that format.
+ */
+function parseTagWithChannel(tag: string): { version: string; channel: string } | null {
+  const match = tag.match(/^(.+)-([A-Za-z]+)$/);
+  if (match) {
+    return { version: match[1], channel: match[2] };
+  }
+  return null;
+}
+
+function getSameChannelTags(candidates: string[], currentTag: string): string[] {
+  const parsed = parseTagWithChannel(currentTag);
+  if (!parsed) return candidates;
+
+  return candidates.filter(tag => {
+    const p = parseTagWithChannel(tag);
+    return p && p.channel === parsed.channel;
+  });
+}
+
 async function getPreviousTag(
   octokit: ReturnType<typeof github.getOctokit>,
   owner: string,
@@ -20,12 +42,12 @@ async function getPreviousTag(
 ): Promise<{ tag: string | null; commit: string | null }> {
   try {
     let tagToUse: string | null = null;
-    
-    if (previousTag) {
+
+    if (previousTag && previousTag.trim()) {
       // If explicitly provided, use it
       try {
-        execSync(`git rev-parse --verify ${previousTag}`, { stdio: 'ignore' });
-        tagToUse = previousTag;
+        execSync(`git rev-parse --verify "${previousTag}"`, { stdio: 'ignore' });
+        tagToUse = previousTag.trim();
       } catch {
         core.warning(`Previous tag ${previousTag} not found`);
         return { tag: null, commit: null };
@@ -37,15 +59,20 @@ async function getPreviousTag(
         const releases = await octokit.rest.repos.listReleases({
           owner,
           repo,
-          per_page: 10 // Get first 10 releases to find one that's not the current tag
+          per_page: 20
         });
 
-        // Find the latest release that's not the current tag
-        const latestRelease = releases.data.find(release => release.tag_name !== currentTag);
-        
-        if (latestRelease) {
-          tagToUse = latestRelease.tag_name;
-          core.info(`Found latest release tag: ${tagToUse}`);
+        const candidates = releases.data
+          .map(r => r.tag_name)
+          .filter(tag => tag !== currentTag);
+
+        // For x.x.x-channel format: prefer same-channel tags
+        const sameChannel = getSameChannelTags(candidates, currentTag);
+        const toSearch = sameChannel.length > 0 ? sameChannel : candidates;
+
+        if (toSearch.length > 0) {
+          tagToUse = toSearch[0];
+          core.info(`Found previous release tag: ${tagToUse}`);
         } else {
           core.info('No previous release found via API, falling back to git tags');
         }
@@ -61,9 +88,13 @@ async function getPreviousTag(
           .split('\n')
           .filter(tag => tag && tag !== currentTag);
 
-        if (tags.length > 0) {
-          tagToUse = tags[0];
-          core.info(`Found latest git tag: ${tagToUse}`);
+        // For x.x.x-channel: prefer same-channel tags
+        const sameChannel = getSameChannelTags(tags, currentTag);
+        const toUse = sameChannel.length > 0 ? sameChannel : tags;
+
+        if (toUse.length > 0) {
+          tagToUse = toUse[0];
+          core.info(`Found previous git tag: ${tagToUse}`);
         }
       }
     }
@@ -74,7 +105,7 @@ async function getPreviousTag(
     }
 
     // Get the commit SHA that the tag points to
-    const commitSha = execSync(`git rev-parse ${tagToUse}`, { encoding: 'utf-8' }).trim();
+    const commitSha = execSync(`git rev-parse "${tagToUse}"`, { encoding: 'utf-8' }).trim();
     return { tag: tagToUse, commit: commitSha };
   } catch (error) {
     core.warning(`Could not find previous tag: ${error}`);
@@ -435,7 +466,7 @@ async function run(): Promise<void> {
     const { owner, repo } = github.context.repo;
 
     // Get previous tag and its commit SHA
-    const previousTagInfo = await getPreviousTag(octokit, owner, repo, tagName, previousTagInput || undefined);
+    const previousTagInfo = await getPreviousTag(octokit, owner, repo, tagName, previousTagInput?.trim() || undefined);
     const previousTag = previousTagInfo.tag;
     const previousCommit = previousTagInfo.commit;
     core.info(`Previous tag: ${previousTag || 'None (first release)'}`);

@@ -4,10 +4,11 @@ A GitHub Action that automatically generates release notes using AI (powered by 
 
 ## Quick Start
 
-1. **Set up the action repository** (see [SETUP.md](SETUP.md) for detailed instructions)
-2. **Get a Groq API key** from [console.groq.com/keys](https://console.groq.com/keys)
-3. **Add `GROQ_API_KEY` as a GitHub secret** in your project repository
-4. **Use the action** in your workflow (see examples below)
+1. **Get a Groq API key** from [console.groq.com/keys](https://console.groq.com/keys)
+2. **Add `GROQ_API_KEY` as a GitHub secret** in your project repository
+3. **Use the action** from [StroepWafel/AI-Release-Notes](https://github.com/StroepWafel/AI-Release-Notes/) in your workflow (see examples below)
+
+To host your own copy of the action, see [SETUP.md](SETUP.md).
 
 ## Features
 
@@ -21,15 +22,28 @@ A GitHub Action that automatically generates release notes using AI (powered by 
 
 ### Basic Example
 
+Copy this workflow to `.github/workflows/` in **any** repo. Supports both modes:
+
+**Two tags** (explicit range): provide `from_tag` + `to_tag`  
+**Legacy** (auto-detect previous): provide `version` only (e.g. `1.0.0` or `v1.0.0`)
+
 ```yaml
-name: Create Release
+name: Create Release Notes
 
 on:
   workflow_dispatch:
     inputs:
-      release_version:
-        description: 'Release version'
-        required: true
+      version:
+        description: 'Version (legacy; e.g., 1.0.0) - auto-detects previous'
+        required: false
+        type: string
+      from_tag:
+        description: 'Previous tag (e.g., v1.0.0) - use with to_tag'
+        required: false
+        type: string
+      to_tag:
+        description: 'Release tag (e.g., v2.0.0) - use with from_tag'
+        required: false
         type: string
 
 jobs:
@@ -38,21 +52,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Required to fetch all tags and history
+          fetch-depth: 0
+
+      - name: Determine tags
+        id: tags
+        run: |
+          if [ -n "${{ github.event.inputs.from_tag }}" ] && [ -n "${{ github.event.inputs.to_tag }}" ]; then
+            echo "tag_name=${{ github.event.inputs.to_tag }}" >> $GITHUB_OUTPUT
+            echo "previous_tag=${{ github.event.inputs.from_tag }}" >> $GITHUB_OUTPUT
+          elif [ -n "${{ github.event.inputs.version }}" ]; then
+            ver="${{ github.event.inputs.version }}"
+            [[ "$ver" == v* ]] || ver="v$ver"
+            echo "tag_name=$ver" >> $GITHUB_OUTPUT
+            echo "previous_tag=" >> $GITHUB_OUTPUT
+          else
+            echo "Provide either (from_tag AND to_tag) OR version"
+            exit 1
+          fi
 
       - name: Generate Release Notes
-        uses: your-username/ai-release-notes@v1
+        uses: StroepWafel/AI-Release-Notes@v1
         with:
           groq_api_key: ${{ secrets.GROQ_API_KEY }}
-          tag_name: v${{ github.event.inputs.release_version }}
-          release_name: Release v${{ github.event.inputs.release_version }}
-          draft: false
-          prerelease: false
+          tag_name: ${{ steps.tags.outputs.tag_name }}
+          previous_tag: ${{ steps.tags.outputs.previous_tag }}
+          release_name: ${{ steps.tags.outputs.tag_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-### Advanced Example
+### Advanced Example (with release channel)
+
+Same backwards compatibility: use `version` (legacy) or `from_tag`/`to_tag`:
 
 ```yaml
 name: Create Release
@@ -60,13 +91,22 @@ name: Create Release
 on:
   workflow_dispatch:
     inputs:
-      release_version:
-        description: 'Release version'
-        required: true
+      version:
+        description: 'Version (legacy; e.g., 1.0.0)'
+        required: false
+        type: string
+      from_tag:
+        description: 'Previous tag - use with to_tag'
+        required: false
+        type: string
+      to_tag:
+        description: 'Release tag - use with from_tag'
+        required: false
         type: string
       release_channel:
         description: 'Release channel'
-        required: true
+        required: false
+        default: 'stable'
         type: choice
         options:
           - stable
@@ -81,6 +121,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Determine tags
+        id: tags
+        run: |
+          if [ -n "${{ github.event.inputs.from_tag }}" ] && [ -n "${{ github.event.inputs.to_tag }}" ]; then
+            echo "tag_name=${{ github.event.inputs.to_tag }}" >> $GITHUB_OUTPUT
+            echo "previous_tag=${{ github.event.inputs.from_tag }}" >> $GITHUB_OUTPUT
+          elif [ -n "${{ github.event.inputs.version }}" ]; then
+            ver="${{ github.event.inputs.version }}"
+            [[ "$ver" == v* ]] || ver="v$ver"
+            echo "tag_name=$ver" >> $GITHUB_OUTPUT
+            echo "previous_tag=" >> $GITHUB_OUTPUT
+          else
+            echo "Provide either (from_tag AND to_tag) OR version"
+            exit 1
+          fi
+
       - name: Determine if draft/prerelease
         id: flags
         run: |
@@ -93,16 +149,15 @@ jobs:
           fi
 
       - name: Build application
-        run: |
-          # Your build steps here
-          echo "Building..."
+        run: echo "Building..."
 
       - name: Generate Release Notes
-        uses: your-username/ai-release-notes@v1
+        uses: StroepWafel/AI-Release-Notes@v1
         with:
           groq_api_key: ${{ secrets.GROQ_API_KEY }}
-          tag_name: ${{ github.event.inputs.release_version }}-${{ github.event.inputs.release_channel }}
-          release_name: "[${{ github.event.inputs.release_channel }}] v${{ github.event.inputs.release_version }}"
+          tag_name: ${{ steps.tags.outputs.tag_name }}
+          previous_tag: ${{ steps.tags.outputs.previous_tag }}
+          release_name: "[${{ github.event.inputs.release_channel }}] ${{ steps.tags.outputs.tag_name }}"
           draft: ${{ steps.flags.outputs.draft }}
           prerelease: ${{ steps.flags.outputs.prerelease }}
           model: llama-3.1-70b-versatile
