@@ -39,13 +39,13 @@ inputs:
     required: false
     default: '8000'
   diff_limit:
-    description: 'Max diff lines sent to AI (default 500). Higher = more depth.'
+    description: 'Max diff lines sent to AI (default 120). Higher = more depth but may exceed Groq token limits.'
     required: false
-    default: '500'
+    default: '120'
   commits_limit:
-    description: 'Max commit messages sent to AI (default 200). Higher = more context.'
+    description: 'Max commit messages sent to AI (default 60). Higher = more context.'
     required: false
-    default: '200'
+    default: '60'
   detail_level:
     description: 'Shortcut for depth: brief, standard, or detailed'
     required: false

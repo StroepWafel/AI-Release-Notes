@@ -40518,9 +40518,9 @@ async function getPreviousTag(octokit, owner, repo, currentTag, previousTag) {
 }
 function resolveLimits(detailLevel, diffLimitInput, commitsLimitInput) {
     const presets = {
-        brief: { diff: 150, commits: 50 },
-        standard: { diff: 500, commits: 200 },
-        detailed: { diff: 800, commits: 400 }
+        brief: { diff: 60, commits: 25 },
+        standard: { diff: 120, commits: 60 },
+        detailed: { diff: 250, commits: 120 }
     };
     const preset = presets[detailLevel.toLowerCase()] || presets.standard;
     return {
@@ -40686,8 +40686,9 @@ function getContributors(previousCommit, currentTag) {
     }
 }
 async function generateReleaseNotes(groqClient, model, diff, commits, changedFiles, tagName, releaseName, previousTag, newContributors, metadata, stats, compatibility, maxTokens, limits, template) {
-    const maxDiffLength = limits.diffLimit * 80;
-    const maxCommitsLength = limits.commitsLimit * 60;
+    // Conservative char limits to stay under Groq input token limits (~6k for on_demand tier)
+    const maxDiffLength = limits.diffLimit * 35;
+    const maxCommitsLength = limits.commitsLimit * 25;
     const truncatedDiff = diff.length > maxDiffLength ? diff.substring(0, maxDiffLength) + '\n... (truncated)' : diff;
     const truncatedCommits = commits.length > maxCommitsLength ? commits.substring(0, maxCommitsLength) + '\n... (truncated)' : commits;
     const metadataBlock = `Available metadata to use: Release Date ${metadata.releaseDate}, Build ${metadata.commitHash}, Commits ${stats.commitCount}, Contributors ${stats.contributorCount}, Files changed ${stats.filesChanged}${compatibility ? `, Compatibility ${compatibility}` : ''}${newContributors.length > 0 ? `, New contributors: ${newContributors.join(', ')}` : ''}.`;
