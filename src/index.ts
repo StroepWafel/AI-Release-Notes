@@ -311,7 +311,7 @@ async function generateReleaseNotes(
   maxTokens: number,
   limits: Limits,
   template?: string
-): Promise<string> {
+): Promise<{ notes: string; suggestedReleaseTitle: string | null }> {
   // Conservative char limits to stay under Groq input token limits (~6k for on_demand tier)
   const maxDiffLength = limits.diffLimit * 35;
   const maxCommitsLength = limits.commitsLimit * 25;
@@ -321,16 +321,10 @@ async function generateReleaseNotes(
   const metadataBlock = `Available metadata to use: Release Date ${metadata.releaseDate}, Build ${metadata.commitHash}, Commits ${stats.commitCount}, Contributors ${stats.contributorCount}, Files changed ${stats.filesChanged}${compatibility ? `, Compatibility ${compatibility}` : ''}${newContributors.length > 0 ? `, New contributors: ${newContributors.join(', ')}` : ''}.`;
 
   const formatInstructions = template
-    ? `\n**Template to follow (output raw markdown, no \`\`\` code blocks):**\n${template}\n${metadataBlock}\n`
+    ? `\n**The FIRST line of your output MUST be: Release Title: [short descriptive phrase, e.g. "add multiple languages"]. Then a blank line. Then follow this template (output raw markdown, no \`\`\` code blocks):**\n${template}\n${metadataBlock}\n`
     : `
 
-**Output format (follow this structure). Output raw markdown only - do NOT wrap the output in \`\`\` code blocks:**
-
-${tagName} — ${releaseName}
-
-Release Date: ${metadata.releaseDate}
-Build: ${metadata.commitHash}
-${compatibility ? `Compatibility: ${compatibility}` : ''}
+**Output format:** The FIRST line of your output MUST be exactly: Release Title: [short descriptive phrase summarizing the main changes, e.g. "add multiple languages" or "performance improvements and bug fixes"]. Keep it concise, lowercase. Then a blank line. Then ## Overview (we add the header with Release Date/Build automatically). Output raw markdown only - do NOT wrap in \`\`\` code blocks. Include these sections as applicable:
 
 ## Overview
 Short executive summary. Use emojis where appropriate. This release focuses on: [bullet points]
@@ -347,8 +341,7 @@ Short executive summary. Use emojis where appropriate. This release focuses on: 
 ## Dependency Updates (if any)
 ## Internal Changes (optional)
 ## Stats
-Commits: ${stats.commitCount} | Contributors: ${stats.contributorCount} | Files changed: ${stats.filesChanged}
-${newContributors.length > 0 ? `\nNew contributors: ${newContributors.join(', ')}` : ''}`;
+End with: Commits: X | Contributors: Y | Files changed: Z (use the actual counts from the data above).${newContributors.length > 0 ? ` Include: New contributors: [list names from data above].` : ''}`;
 
   const prompt = `You are a technical writer creating in-depth release notes for a software project.
 
@@ -402,27 +395,33 @@ Generate the release notes now:`;
     if (fenceMatch) {
       notes = fenceMatch[1].trim();
     }
-    return notes;
+    // Parse AI-generated release title from first line: "Release Title: add multiple languages"
+    let suggestedReleaseTitle: string | null = null;
+    const titleMatch = notes.match(/^Release Title:\s*(.+?)(?:\n|$)/im);
+    if (titleMatch) {
+      suggestedReleaseTitle = titleMatch[1].trim();
+      notes = notes.replace(/^Release Title:\s*.+?\n?\n?/im, '');
+    }
+    // Prepend header with actual metadata; use AI-generated title when available
+    const displayName = suggestedReleaseTitle ? `${tagName} - ${suggestedReleaseTitle}` : releaseName;
+    const headerLines = [
+      `${tagName} — ${displayName}`,
+      '',
+      `Release Date: ${metadata.releaseDate}`,
+      `Build: ${metadata.commitHash}`,
+      ...(compatibility ? [`Compatibility: ${compatibility}`] : []),
+      '',
+      ''
+    ];
+    const header = headerLines.join('\n');
+    // Strip any header AI may have generated (lines before ## Overview)
+    const overviewIndex = notes.search(/^## Overview/m);
+    const body = overviewIndex >= 0 ? notes.substring(overviewIndex) : notes;
+    return { notes: header + body, suggestedReleaseTitle };
   } catch (error) {
     core.setFailed(`Failed to generate release notes: ${error}`);
     throw error;
   }
-}
-
-/**
- * Extract release name from the first line of generated notes.
- * Expected format: "tagName — Release Name" or "tagName - Release Name"
- */
-function extractReleaseNameFromNotes(notes: string, tagName: string): string | null {
-  const firstLine = notes.split('\n')[0]?.trim();
-  if (!firstLine) return null;
-  // Match tag followed by em dash, en dash, or regular dash
-  const match = firstLine.match(new RegExp(`^${escapeRegex(tagName)}\\s*[—–-]\\s*(.+)$`));
-  return match ? match[1].trim() : null;
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 async function createRelease(
@@ -608,7 +607,7 @@ async function run(): Promise<void> {
     // Generate release notes using AI
     core.info('Generating release notes with AI...');
     const releaseNameForPrompt = releaseNameInput || tagName;
-    const releaseNotes = await generateReleaseNotes(
+    const { notes: releaseNotes, suggestedReleaseTitle } = await generateReleaseNotes(
       groqClient,
       model,
       diff,
@@ -629,13 +628,14 @@ async function run(): Promise<void> {
     core.info('Generated release notes:');
     core.info(releaseNotes);
 
-    // Derive release name when not provided: extract from first line of notes or fall back to tag
+    // Use AI-generated title when release_name not provided: "v1.10.3 - add multiple languages"
     let releaseName = releaseNameInput;
     if (!releaseName || releaseName.trim() === '') {
-      const extracted = extractReleaseNameFromNotes(releaseNotes, tagName);
-      releaseName = extracted || tagName;
-      if (extracted) {
-        core.info(`Using derived release name: ${releaseName}`);
+      if (suggestedReleaseTitle) {
+        releaseName = `${tagName} - ${suggestedReleaseTitle}`;
+        core.info(`Using AI-generated release name: ${releaseName}`);
+      } else {
+        releaseName = tagName;
       }
     }
 
