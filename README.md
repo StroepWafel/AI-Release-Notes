@@ -187,6 +187,11 @@ jobs:
 | `previous_tag` | Previous tag to compare against | No | Latest tag |
 | `files` | Comma-separated list of files to attach | No | - |
 | `body_template` | Optional template for release notes structure | No | - |
+| `max_tokens` | Max AI completion tokens (prevents truncation) | No | `8000` |
+| `diff_limit` | Max diff lines sent to AI (higher = more depth) | No | `500` |
+| `commits_limit` | Max commit messages sent to AI | No | `200` |
+| `detail_level` | Shortcut: `brief`, `standard`, or `detailed` | No | `standard` |
+| `compatibility` | e.g. "Node 18+, Python 3.10+" for Compatibility field | No | - |
 
 ## Outputs
 

@@ -34,6 +34,25 @@ inputs:
   body_template:
     description: 'Optional template for release notes structure'
     required: false
+  max_tokens:
+    description: 'Max AI completion tokens (default 8000). Prevents output truncation.'
+    required: false
+    default: '8000'
+  diff_limit:
+    description: 'Max diff lines sent to AI (default 500). Higher = more depth.'
+    required: false
+    default: '500'
+  commits_limit:
+    description: 'Max commit messages sent to AI (default 200). Higher = more context.'
+    required: false
+    default: '200'
+  detail_level:
+    description: 'Shortcut for depth: brief, standard, or detailed'
+    required: false
+    default: 'standard'
+  compatibility:
+    description: 'Optional. e.g. "Node 18+, Python 3.10+". Placed in Compatibility field.'
+    required: false
 outputs:
   release_id:
     description: 'The ID of the created release'

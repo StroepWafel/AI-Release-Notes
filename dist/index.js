@@ -40516,7 +40516,37 @@ async function getPreviousTag(octokit, owner, repo, currentTag, previousTag) {
         return { tag: null, commit: null };
     }
 }
-function getGitDiff(previousCommit, currentTag) {
+function resolveLimits(detailLevel, diffLimitInput, commitsLimitInput) {
+    const presets = {
+        brief: { diff: 150, commits: 50 },
+        standard: { diff: 500, commits: 200 },
+        detailed: { diff: 800, commits: 400 }
+    };
+    const preset = presets[detailLevel.toLowerCase()] || presets.standard;
+    return {
+        diffLimit: diffLimitInput ? parseInt(diffLimitInput, 10) || preset.diff : preset.diff,
+        commitsLimit: commitsLimitInput ? parseInt(commitsLimitInput, 10) || preset.commits : preset.commits
+    };
+}
+function getReleaseMetadata(currentTag) {
+    try {
+        let currentCommit;
+        try {
+            currentCommit = (0, child_process_1.execSync)(`git rev-parse ${currentTag}`, { encoding: 'utf-8' }).trim();
+        }
+        catch {
+            currentCommit = (0, child_process_1.execSync)('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
+        }
+        const shortHash = (0, child_process_1.execSync)(`git rev-parse --short ${currentCommit}`, { encoding: 'utf-8' }).trim();
+        const dateStr = (0, child_process_1.execSync)(`git log -1 --format=%ci ${currentCommit}`, { encoding: 'utf-8' }).trim();
+        const releaseDate = dateStr ? dateStr.split(' ')[0] : new Date().toISOString().split('T')[0];
+        return { commitHash: shortHash, releaseDate };
+    }
+    catch {
+        return { commitHash: 'unknown', releaseDate: new Date().toISOString().split('T')[0] };
+    }
+}
+function getGitDiff(previousCommit, currentTag, diffLimit) {
     try {
         // Get the commit SHA that the current tag points to
         let currentCommit;
@@ -40528,20 +40558,24 @@ function getGitDiff(previousCommit, currentTag) {
             currentCommit = (0, child_process_1.execSync)('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
         }
         if (!previousCommit) {
-            // If no previous commit, get diff from root to current
             const stat = (0, child_process_1.execSync)(`git diff --stat ${currentCommit}`, { encoding: 'utf-8' });
-            // Also get a summary of what changed
-            const summary = (0, child_process_1.execSync)(`git log --oneline ${currentCommit} | head -20`, { encoding: 'utf-8' });
-            return `Summary:\n${summary}\n\nFile changes:\n${stat}`;
+            const summary = (0, child_process_1.execSync)(`git log --oneline ${currentCommit}`, { encoding: 'utf-8' });
+            const summaryLines = summary.trim().split('\n').slice(0, diffLimit).join('\n');
+            return `Summary:\n${summaryLines}\n\nFile changes:\n${stat}`;
         }
-        // Get diff between the two commits
-        // First get the stat summary
         const stat = (0, child_process_1.execSync)(`git diff --stat ${previousCommit}..${currentCommit}`, { encoding: 'utf-8' });
-        // Get a brief summary of actual code changes (limited to avoid token limits)
         let codeDiff = '';
         try {
-            // Get a sample of actual changes (first 50 lines of diff)
-            codeDiff = (0, child_process_1.execSync)(`git diff ${previousCommit}..${currentCommit} | head -50`, { encoding: 'utf-8' });
+            const fullDiff = (0, child_process_1.execSync)(`git diff ${previousCommit}..${currentCommit}`, {
+                encoding: 'utf-8',
+                maxBuffer: 2 * 1024 * 1024
+            });
+            const lines = fullDiff.trim().split('\n');
+            const limit = Math.min(diffLimit, lines.length);
+            codeDiff = lines.slice(0, limit).join('\n');
+            if (lines.length > limit) {
+                codeDiff += '\n... (truncated)';
+            }
         }
         catch {
             // If that fails, just use stat
@@ -40553,23 +40587,25 @@ function getGitDiff(previousCommit, currentTag) {
         return '';
     }
 }
-function getCommitMessages(previousCommit, currentTag) {
+function getCommitMessages(previousCommit, currentTag, commitsLimit) {
     try {
-        // Get the commit SHA that the current tag points to
         let currentCommit;
         try {
             currentCommit = (0, child_process_1.execSync)(`git rev-parse ${currentTag}`, { encoding: 'utf-8' }).trim();
         }
         catch {
-            // If tag doesn't exist, use HEAD
             currentCommit = (0, child_process_1.execSync)('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
         }
+        let commits;
         if (!previousCommit) {
-            // If no previous commit, get all commits up to current
-            return (0, child_process_1.execSync)(`git log --pretty=format:"%h - %s (%an)" ${currentCommit}`, { encoding: 'utf-8' });
+            commits = (0, child_process_1.execSync)(`git log --pretty=format:"%h - %s (%an)" ${currentCommit}`, { encoding: 'utf-8' });
         }
-        // Get commit messages between commits (exclusive of previous, inclusive of current)
-        return (0, child_process_1.execSync)(`git log ${previousCommit}..${currentCommit} --pretty=format:"%h - %s (%an)"`, { encoding: 'utf-8' });
+        else {
+            commits = (0, child_process_1.execSync)(`git log ${previousCommit}..${currentCommit} --pretty=format:"%h - %s (%an)"`, { encoding: 'utf-8' });
+        }
+        const lines = commits.trim().split('\n');
+        const limited = lines.slice(0, commitsLimit).join('\n');
+        return lines.length > commitsLimit ? limited + '\n... (truncated)' : limited;
     }
     catch (error) {
         core.warning(`Could not get commit messages: ${error}`);
@@ -40649,52 +40685,80 @@ function getContributors(previousCommit, currentTag) {
         return { current: new Set(), previous: new Set() };
     }
 }
-async function generateReleaseNotes(groqClient, model, diff, commits, changedFiles, tagName, previousTag, newContributors, template) {
-    // Truncate long outputs to avoid token limits
-    const maxDiffLength = 2000;
-    const maxCommitsLength = 1000;
+async function generateReleaseNotes(groqClient, model, diff, commits, changedFiles, tagName, releaseName, previousTag, newContributors, metadata, stats, compatibility, maxTokens, limits, template) {
+    const maxDiffLength = limits.diffLimit * 80;
+    const maxCommitsLength = limits.commitsLimit * 60;
     const truncatedDiff = diff.length > maxDiffLength ? diff.substring(0, maxDiffLength) + '\n... (truncated)' : diff;
     const truncatedCommits = commits.length > maxCommitsLength ? commits.substring(0, maxCommitsLength) + '\n... (truncated)' : commits;
-    const prompt = `You are a technical writer creating release notes for a software project. 
+    const metadataBlock = `Available metadata to use: Release Date ${metadata.releaseDate}, Build ${metadata.commitHash}, Commits ${stats.commitCount}, Contributors ${stats.contributorCount}, Files changed ${stats.filesChanged}${compatibility ? `, Compatibility ${compatibility}` : ''}${newContributors.length > 0 ? `, New contributors: ${newContributors.join(', ')}` : ''}.`;
+    const formatInstructions = template
+        ? `\n**Template to follow:**\n${template}\n${metadataBlock}\n`
+        : `
 
-IMPORTANT: Only list changes that are explicitly present in the diffs and commit messages below. Do not invent, assume, or infer changes that are not directly shown. Every change included must be directly relevant to the released program itself.
-For example, do not mention documentation, README, CI, or workflow updates unless they materially affect the contents or behavior of the release.
+**Output format (follow this structure):**
+
+\`\`\`
+${tagName} — ${releaseName}
+
+Release Date: ${metadata.releaseDate}
+Build: ${metadata.commitHash}
+${compatibility ? `Compatibility: ${compatibility}` : ''}
+
+## Overview
+Short executive summary. Use emojis where appropriate: 🚀 Major feature, ⚡ Performance, 🐛 Stability, 💥 Breaking.
+This release focuses on: [bullet points]
+
+## What's New
+[Feature Name] with brief explanation, key capabilities, limitations if any.
+
+## Improvements
+### Performance Improvements
+[Concrete details with how/why if relevant]
+
+### UX / Quality Improvements
+[Clearer errors, better logging, UI changes, etc.]
+
+## Fixes
+[Bug fixes with enough context to be useful. If severe, briefly explain impact.]
+
+## Breaking Changes
+[Only if there are actual breaking changes. Use Old/New format. Migration steps if needed.]
+
+## Dependency Updates
+[Package upgrades if visible in diff/commits. Omit if none.]
+
+## Internal Changes
+[For contributors: refactoring, tests, CI - only if present in changes]
+
+## Stats
+Commits: ${stats.commitCount} | Contributors: ${stats.contributorCount} | Files changed: ${stats.filesChanged}
+${newContributors.length > 0 ? `\nNew contributors: ${newContributors.join(', ')}` : ''}
+\`\`\``;
+    const prompt = `You are a technical writer creating in-depth release notes for a software project.
+
+CRITICAL: Only list changes that are explicitly present in the diffs and commit messages below. Do not invent, assume, or infer changes not directly shown. Every change must be directly relevant to the released program.
+Do not mention documentation, README, CI, or workflow updates unless they materially affect the release contents or behavior.
 
 **Current Release Tag:** ${tagName}
 **Previous Release Tag:** ${previousTag || 'N/A (first release)'}
 
-**Changed Files (only files that actually changed):**
+**Changed Files:**
 \`\`\`
 ${changedFiles || 'No files changed'}
 \`\`\`
 
-**Git Diff Summary (showing only what changed between releases):**
+**Git Diff (what changed between releases):**
 \`\`\`
 ${truncatedDiff || 'No changes detected'}
 \`\`\`
 
-**Commit Messages (only commits between the two releases):**
+**Commit Messages:**
 \`\`\`
 ${truncatedCommits || 'No commits'}
 \`\`\`
 
-Based ONLY on the information above, generate release notes in markdown format. Include:
-1. **Features** - Only if new functionality was actually added (based on commit messages and file changes)
-2. **Improvements** - Only if existing features were enhanced
-3. **Bug Fixes** - Only if bugs were explicitly fixed
-4. **Breaking Changes** - Only if there are actual breaking changes (rare, usually omit)
-5. **New Contributors** - List any new contributors who made commits in this release${newContributors.length > 0 ? `:\n${newContributors.map(c => `- ${c}`).join('\n')}` : ' (none)'}
-6. **Other** - Any other notable changes
-
-CRITICAL: 
-- Only mention changes that are clearly visible in the diff and commit messages
-- If a category has no changes, completely omit that section
-- Do not infer or assume changes that aren't explicitly shown
-- Be concise and specific
-- Focus on user-visible changes when possible
-- Always include the New Contributors section if there are new contributors listed above
-
-${template ? `\n**Template to follow:**\n${template}\n` : ''}
+Based ONLY on the information above, generate detailed release notes. Go in-depth on changes - explain what was done and why it matters when the diff/commits support it. Omit sections that have no changes.
+${formatInstructions}
 
 Generate the release notes now:`;
     try {
@@ -40702,7 +40766,7 @@ Generate the release notes now:`;
             messages: [
                 {
                     role: 'system',
-                    content: 'You are a technical writer specializing in creating clear, concise, and informative release notes for software projects. You analyze code changes and commit messages to create well-structured release notes.'
+                    content: 'You are a technical writer specializing in creating detailed, well-structured release notes. You analyze code changes and commit messages to produce comprehensive release notes with clear sections: overview, features, improvements, fixes, breaking changes, dependency updates. Be specific and in-depth. Only include what is explicitly supported by the provided diff and commits.'
                 },
                 {
                     role: 'user',
@@ -40711,7 +40775,7 @@ Generate the release notes now:`;
             ],
             model: model,
             temperature: 0.7,
-            max_tokens: 2000
+            max_tokens: maxTokens
         });
         const notes = completion.choices[0]?.message?.content || 'No release notes generated.';
         return notes.trim();
@@ -40721,7 +40785,22 @@ Generate the release notes now:`;
         throw error;
     }
 }
-async function createRelease(octokit, tagName, releaseName, body, draft, prerelease, files) {
+/**
+ * Extract release name from the first line of generated notes.
+ * Expected format: "tagName — Release Name" or "tagName - Release Name"
+ */
+function extractReleaseNameFromNotes(notes, tagName) {
+    const firstLine = notes.split('\n')[0]?.trim();
+    if (!firstLine)
+        return null;
+    // Match tag followed by em dash, en dash, or regular dash
+    const match = firstLine.match(new RegExp(`^${escapeRegex(tagName)}\\s*[—–-]\\s*(.+)$`));
+    return match ? match[1].trim() : null;
+}
+function escapeRegex(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+async function createRelease(octokit, tagName, releaseName, body, draft, prerelease, files, releaseNameWasProvided) {
     const { owner, repo } = github.context.repo;
     try {
         // Create the release
@@ -40773,15 +40852,19 @@ async function createRelease(octokit, tagName, releaseName, body, draft, prerele
     catch (error) {
         if (error.status === 422 && error.message?.includes('already exists')) {
             core.info(`Release ${tagName} already exists. Updating...`);
-            // Get existing release
             const releases = await octokit.rest.repos.listReleases({ owner, repo });
             const existingRelease = releases.data.find(r => r.tag_name === tagName);
             if (existingRelease) {
+                // Only update name if user provided one, or if existing release has no custom name (defaults to tag)
+                const existingName = existingRelease.name || tagName;
+                const nameToUse = releaseNameWasProvided || existingName === tagName || existingName === ''
+                    ? releaseName
+                    : existingName;
                 const updated = await octokit.rest.repos.updateRelease({
                     owner,
                     repo,
                     release_id: existingRelease.id,
-                    name: releaseName,
+                    name: nameToUse,
                     body: body,
                     draft: draft,
                     prerelease: prerelease
@@ -40797,14 +40880,21 @@ async function run() {
     try {
         const groqApiKey = core.getInput('groq_api_key', { required: true });
         const tagName = core.getInput('tag_name', { required: true });
-        const releaseName = core.getInput('release_name') || tagName;
+        const releaseNameInput = core.getInput('release_name');
         const draft = core.getBooleanInput('draft');
         const prerelease = core.getBooleanInput('prerelease');
         const model = core.getInput('model') || 'meta-llama/llama-4-maverick-17b-128e-instruct';
         const previousTagInput = core.getInput('previous_tag');
         const filesInput = core.getInput('files');
         const bodyTemplate = core.getInput('body_template');
+        const maxTokensInput = core.getInput('max_tokens');
+        const diffLimitInput = core.getInput('diff_limit');
+        const commitsLimitInput = core.getInput('commits_limit');
+        const detailLevel = core.getInput('detail_level');
+        const compatibility = core.getInput('compatibility');
         const files = filesInput ? filesInput.split(',').map(f => f.trim()).filter(f => f) : undefined;
+        const limits = resolveLimits(detailLevel, diffLimitInput, commitsLimitInput);
+        const maxTokens = maxTokensInput ? parseInt(maxTokensInput, 10) || 8000 : 8000;
         core.info(`Generating release notes for tag: ${tagName}`);
         core.info(`Using model: ${model}`);
         // Initialize Groq client
@@ -40833,28 +40923,43 @@ async function run() {
         }
         // Get git information using commit SHAs for accurate diffing
         core.info('Collecting git information...');
-        const diff = getGitDiff(previousCommit, tagName);
-        const commits = getCommitMessages(previousCommit, tagName);
+        const diff = getGitDiff(previousCommit, tagName, limits.diffLimit);
+        const commits = getCommitMessages(previousCommit, tagName, limits.commitsLimit);
         const changedFiles = getChangedFiles(previousCommit, tagName);
         // Get contributors and identify new ones
         core.info('Identifying new contributors...');
         const contributors = getContributors(previousCommit, tagName);
         const newContributors = Array.from(contributors.current).filter(contributor => !contributors.previous.has(contributor));
-        // Log what we found
-        core.info(`Found ${commits.split('\n').filter(c => c.trim()).length} commits`);
-        core.info(`Changed files: ${changedFiles.split('\n').filter(f => f.trim()).length}`);
+        const metadata = getReleaseMetadata(tagName);
+        const stats = {
+            commitCount: commits.split('\n').filter(c => c.trim()).length,
+            contributorCount: contributors.current.size,
+            filesChanged: changedFiles.split('\n').filter(f => f.trim()).length
+        };
+        core.info(`Found ${stats.commitCount} commits`);
+        core.info(`Changed files: ${stats.filesChanged}`);
         core.info(`New contributors: ${newContributors.length > 0 ? newContributors.join(', ') : 'None'}`);
         if (!commits && !diff) {
             core.warning('No commits or changes found. Creating release with default notes.');
         }
         // Generate release notes using AI
         core.info('Generating release notes with AI...');
-        const releaseNotes = await generateReleaseNotes(groqClient, model, diff, commits, changedFiles, tagName, previousTag, newContributors, bodyTemplate);
+        const releaseNameForPrompt = releaseNameInput || tagName;
+        const releaseNotes = await generateReleaseNotes(groqClient, model, diff, commits, changedFiles, tagName, releaseNameForPrompt, previousTag, newContributors, metadata, stats, compatibility, maxTokens, limits, bodyTemplate);
         core.info('Generated release notes:');
         core.info(releaseNotes);
+        // Derive release name when not provided: extract from first line of notes or fall back to tag
+        let releaseName = releaseNameInput;
+        if (!releaseName || releaseName.trim() === '') {
+            const extracted = extractReleaseNameFromNotes(releaseNotes, tagName);
+            releaseName = extracted || tagName;
+            if (extracted) {
+                core.info(`Using derived release name: ${releaseName}`);
+            }
+        }
         // Create GitHub release
         core.info('Creating GitHub release...');
-        const release = await createRelease(octokit, tagName, releaseName, releaseNotes, draft, prerelease, files);
+        const release = await createRelease(octokit, tagName, releaseName, releaseNotes, draft, prerelease, files, !!(releaseNameInput && releaseNameInput.trim()));
         // Set outputs
         core.setOutput('release_id', release.id.toString());
         core.setOutput('release_url', release.url);
