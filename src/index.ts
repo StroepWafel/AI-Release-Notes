@@ -321,12 +321,11 @@ async function generateReleaseNotes(
   const metadataBlock = `Available metadata to use: Release Date ${metadata.releaseDate}, Build ${metadata.commitHash}, Commits ${stats.commitCount}, Contributors ${stats.contributorCount}, Files changed ${stats.filesChanged}${compatibility ? `, Compatibility ${compatibility}` : ''}${newContributors.length > 0 ? `, New contributors: ${newContributors.join(', ')}` : ''}.`;
 
   const formatInstructions = template
-    ? `\n**Template to follow:**\n${template}\n${metadataBlock}\n`
+    ? `\n**Template to follow (output raw markdown, no \`\`\` code blocks):**\n${template}\n${metadataBlock}\n`
     : `
 
-**Output format (follow this structure):**
+**Output format (follow this structure). Output raw markdown only - do NOT wrap the output in \`\`\` code blocks:**
 
-\`\`\`
 ${tagName} — ${releaseName}
 
 Release Date: ${metadata.releaseDate}
@@ -334,35 +333,22 @@ Build: ${metadata.commitHash}
 ${compatibility ? `Compatibility: ${compatibility}` : ''}
 
 ## Overview
-Short executive summary. Use emojis where appropriate: 🚀 Major feature, ⚡ Performance, 🐛 Stability, 💥 Breaking.
-This release focuses on: [bullet points]
+Short executive summary. Use emojis where appropriate. This release focuses on: [bullet points]
 
 ## What's New
 [Feature Name] with brief explanation, key capabilities, limitations if any.
 
 ## Improvements
 ### Performance Improvements
-[Concrete details with how/why if relevant]
-
 ### UX / Quality Improvements
-[Clearer errors, better logging, UI changes, etc.]
 
 ## Fixes
-[Bug fixes with enough context to be useful. If severe, briefly explain impact.]
-
-## Breaking Changes
-[Only if there are actual breaking changes. Use Old/New format. Migration steps if needed.]
-
-## Dependency Updates
-[Package upgrades if visible in diff/commits. Omit if none.]
-
-## Internal Changes
-[For contributors: refactoring, tests, CI - only if present in changes]
-
+## Breaking Changes (only if applicable)
+## Dependency Updates (if any)
+## Internal Changes (optional)
 ## Stats
 Commits: ${stats.commitCount} | Contributors: ${stats.contributorCount} | Files changed: ${stats.filesChanged}
-${newContributors.length > 0 ? `\nNew contributors: ${newContributors.join(', ')}` : ''}
-\`\`\``;
+${newContributors.length > 0 ? `\nNew contributors: ${newContributors.join(', ')}` : ''}`;
 
   const prompt = `You are a technical writer creating in-depth release notes for a software project.
 
@@ -409,8 +395,14 @@ Generate the release notes now:`;
       max_tokens: maxTokens
     });
 
-    const notes = completion.choices[0]?.message?.content || 'No release notes generated.';
-    return notes.trim();
+    let notes = completion.choices[0]?.message?.content || 'No release notes generated.';
+    notes = notes.trim();
+    // Strip surrounding markdown code fences if model wrapped output
+    const fenceMatch = notes.match(/^```(?:markdown|md)?\s*\n?([\s\S]*?)\n?```\s*$/);
+    if (fenceMatch) {
+      notes = fenceMatch[1].trim();
+    }
+    return notes;
   } catch (error) {
     core.setFailed(`Failed to generate release notes: ${error}`);
     throw error;
