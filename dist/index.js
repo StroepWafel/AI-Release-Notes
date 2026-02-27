@@ -40607,20 +40607,23 @@ function getFullDiff(previousCommit, currentTag, lineLimit) {
 }
 /**
  * Append the diff comparison section to the release body.
- * Includes GitHub compare link and inline diff when show_diff_section is true.
+ * Always includes the GitHub compare link when a previous tag exists.
+ * Inline diff is only added when includeInlineDiff is true.
  */
-function appendDiffSection(body, previousTag, currentTag, previousCommit, diffSectionLimit, owner, repo) {
-    const { diff, wasTruncated } = getFullDiff(previousCommit, currentTag, diffSectionLimit);
-    if (!diff)
-        return body;
+function appendDiffSection(body, previousTag, currentTag, previousCommit, diffSectionLimit, owner, repo, includeInlineDiff) {
     const compareUrl = previousTag && previousCommit
         ? `https://github.com/${owner}/${repo}/compare/${previousTag}...${currentTag}`
         : null;
+    if (!compareUrl)
+        return body;
     const lines = ['', '', '## Changes (diff)', ''];
-    if (compareUrl) {
-        lines.push(`[View full diff on GitHub](${compareUrl})`, '');
+    lines.push(`[View full diff on GitHub](${compareUrl})`, '');
+    if (includeInlineDiff) {
+        const { diff } = getFullDiff(previousCommit, currentTag, diffSectionLimit);
+        if (diff) {
+            lines.push('```diff', diff, '```');
+        }
     }
-    lines.push('```diff', diff, '```');
     return body + lines.join('\n');
 }
 function getGitDiff(previousCommit, currentTag, diffLimit) {
@@ -41141,11 +41144,8 @@ async function run() {
                 releaseName = tagName;
             }
         }
-        // Append diff section at bottom when enabled
-        let finalBody = releaseNotes;
-        if (showDiffSection) {
-            finalBody = appendDiffSection(releaseNotes, previousTag, tagName, previousCommit, diffSectionLimit, owner, repo);
-        }
+        // Append diff section: always add compare link; inline diff only when enabled
+        const finalBody = appendDiffSection(releaseNotes, previousTag, tagName, previousCommit, diffSectionLimit, owner, repo, showDiffSection);
         // Create GitHub release
         core.info('Creating GitHub release...');
         const release = await createRelease(octokit, tagName, releaseName, finalBody, draft, prerelease, files, !!(releaseNameInput && releaseNameInput.trim()));
