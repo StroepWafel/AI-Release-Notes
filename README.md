@@ -192,6 +192,10 @@ jobs:
 | `commits_limit` | Max commit messages sent to AI | No | `60` |
 | `detail_level` | Shortcut: `brief`, `standard`, or `detailed` | No | `standard` |
 | `compatibility` | e.g. "Node 18+, Python 3.10+" for Compatibility field | No | - |
+| `show_diff_section` | Append diff section at bottom of release notes | No | `true` |
+| `diff_section_limit` | Max lines of inline diff in release body | No | `500` |
+| `summarizer_model` | Model for per-file summarization in two-stage mode (empty = use `model`) | No | - |
+| `two_stage_char_limit` | Use two-stage summarization when diff is under this size (chars). Set `0` to disable | No | `40000` |
 
 ## Outputs
 
@@ -220,11 +224,16 @@ Make sure to:
 
 ## How It Works
 
-1. **Fetches Git Information**: Gets all tags and determines the previous release tag
-2. **Analyzes Changes**: Collects git diff, commit messages, and changed files
-3. **Generates Notes**: Sends the information to Groq's API to generate structured release notes
-4. **Creates Release**: Creates or updates the GitHub release with the generated notes
-5. **Attaches Files**: Uploads any specified files to the release
+1. **Fetches Git Information**: Gets all tags and determines the previous release tag (via `previous_tag` input, latest GitHub release, or git tags).
+2. **Analyzes Changes**: Collects git diff, commit messages, and changed files between the tags.
+3. **Two-Stage Summarization** (when diff is under `two_stage_char_limit`, default 40,000 chars):
+   - A separate AI pass summarizes changes *per file* in 2–4 bullet points.
+   - Compiled summaries are passed to the final AI instead of the full diff.
+   - Keeps context size manageable while capturing all changes; large diffs skip this and use the truncated diff directly.
+4. **Generates Notes**: Sends diff (or per-file summaries), commit messages, and metadata to Groq's API to generate structured release notes.
+5. **Creates Release**: Creates or updates the GitHub release with the generated notes.
+6. **Appends Diff Section**: Adds a "Changes (diff)" section at the bottom with a GitHub compare link and inline diff (respects `show_diff_section` and `diff_section_limit`).
+7. **Attaches Files**: Uploads any specified files to the release.
 
 ## Available Groq Models
 
