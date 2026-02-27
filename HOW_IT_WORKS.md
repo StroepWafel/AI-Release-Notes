@@ -52,11 +52,8 @@ flowchart TD
     end
 
     subgraph publish [Publish Release]
-        ReleaseNotes --> DiffSection{show_diff_section?}
-        DiffSection -->|Yes| AppendDiff[appendDiffSection: compare link + inline diff]
-        DiffSection -->|No| SkipDiff[Keep notes as-is]
+        ReleaseNotes --> AppendDiff[appendDiffSection: compare link always, inline diff if show_diff_section]
         AppendDiff --> FinalBody[Body for release]
-        SkipDiff --> FinalBody
         FinalBody --> CreateRelease[Create or update GitHub release]
         CreateRelease --> UploadFiles[Upload files if provided]
         UploadFiles --> SetOutputs[Set release_id, release_url, release_notes]
@@ -80,5 +77,5 @@ flowchart TD
 | **Generate** | Prompt | If summaries exist: per-file summaries as primary, truncated diff as reference. Else: truncated diff only. Plus commits, changed files, metadata. |
 | | Groq | Single chat completion with system + user messages. |
 | | Parse | Extract "Release Title:", strip markdown fences, prepend header with metadata. |
-| **Publish** | Diff section | If `show_diff_section`: append `## Changes (diff)`, GitHub compare link (when prev tag exists), inline diff (truncated by `diff_section_limit` lines). |
+| **Publish** | Diff section | Always append `## Changes (diff)` and GitHub compare link (when prev tag exists). If `show_diff_section`: also append inline diff (truncated by `diff_section_limit` lines). |
 | | Release | Create or update release via GitHub API, upload files, set outputs. |
