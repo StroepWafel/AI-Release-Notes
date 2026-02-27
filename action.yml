@@ -53,6 +53,21 @@ inputs:
   compatibility:
     description: 'Optional. e.g. "Node 18+, Python 3.10+". Placed in Compatibility field.'
     required: false
+  show_diff_section:
+    description: 'Append diff section at bottom of release notes (default true)'
+    required: false
+    default: 'true'
+  diff_section_limit:
+    description: 'Max lines of inline diff in release body (default 500)'
+    required: false
+    default: '500'
+  summarizer_model:
+    description: 'Model for per-file summarization in two-stage mode. If empty, uses same as model.'
+    required: false
+  two_stage_char_limit:
+    description: 'Use two-stage summarization when diff is under this size in chars (default 40000). Set 0 to disable.'
+    required: false
+    default: '40000'
 outputs:
   release_id:
     description: 'The ID of the created release'

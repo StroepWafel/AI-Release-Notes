@@ -40546,6 +40546,83 @@ function getReleaseMetadata(currentTag) {
         return { commitHash: 'unknown', releaseDate: new Date().toISOString().split('T')[0] };
     }
 }
+/**
+ * Get raw unified diff string between two commits (for parsing, two-stage, etc.).
+ * Returns empty string if previousCommit is null or on error.
+ */
+function getRawDiff(previousCommit, currentCommit) {
+    if (!previousCommit)
+        return '';
+    try {
+        return (0, child_process_1.execSync)(`git diff ${previousCommit}..${currentCommit}`, {
+            encoding: 'utf-8',
+            maxBuffer: 2 * 1024 * 1024
+        }).trim();
+    }
+    catch {
+        return '';
+    }
+}
+/**
+ * Get raw git diff between commits for display (no stat/formatting).
+ * Optionally truncated by line count.
+ */
+function getFullDiff(previousCommit, currentTag, lineLimit) {
+    try {
+        let currentCommit;
+        try {
+            currentCommit = (0, child_process_1.execSync)(`git rev-parse ${currentTag}`, { encoding: 'utf-8' }).trim();
+        }
+        catch {
+            currentCommit = (0, child_process_1.execSync)('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
+        }
+        if (!previousCommit) {
+            const summary = (0, child_process_1.execSync)(`git log --oneline ${currentCommit}`, { encoding: 'utf-8' });
+            const stat = (0, child_process_1.execSync)(`git diff --stat ${currentCommit}`, { encoding: 'utf-8' });
+            const content = `Summary:\n${summary}\n\nFile changes:\n${stat}`;
+            return { diff: content, wasTruncated: false };
+        }
+        let fullDiff;
+        try {
+            fullDiff = (0, child_process_1.execSync)(`git diff ${previousCommit}..${currentCommit}`, {
+                encoding: 'utf-8',
+                maxBuffer: 2 * 1024 * 1024
+            });
+        }
+        catch {
+            return { diff: '(diff too large or unavailable)', wasTruncated: false };
+        }
+        if (!lineLimit || lineLimit <= 0) {
+            return { diff: fullDiff.trim(), wasTruncated: false };
+        }
+        const lines = fullDiff.trim().split('\n');
+        const wasTruncated = lines.length > lineLimit;
+        const truncated = lines.slice(0, lineLimit).join('\n');
+        return { diff: truncated + (wasTruncated ? '\n... (truncated)' : ''), wasTruncated };
+    }
+    catch (error) {
+        core.warning(`Could not get full diff: ${error}`);
+        return { diff: '', wasTruncated: false };
+    }
+}
+/**
+ * Append the diff comparison section to the release body.
+ * Includes GitHub compare link and inline diff when show_diff_section is true.
+ */
+function appendDiffSection(body, previousTag, currentTag, previousCommit, diffSectionLimit, owner, repo) {
+    const { diff, wasTruncated } = getFullDiff(previousCommit, currentTag, diffSectionLimit);
+    if (!diff)
+        return body;
+    const compareUrl = previousTag && previousCommit
+        ? `https://github.com/${owner}/${repo}/compare/${previousTag}...${currentTag}`
+        : null;
+    const lines = ['', '', '## Changes (diff)', ''];
+    if (compareUrl) {
+        lines.push(`[View full diff on GitHub](${compareUrl})`, '');
+    }
+    lines.push('```diff', diff, '```');
+    return body + lines.join('\n');
+}
 function getGitDiff(previousCommit, currentTag, diffLimit) {
     try {
         // Get the commit SHA that the current tag points to
@@ -40611,6 +40688,77 @@ function getCommitMessages(previousCommit, currentTag, commitsLimit) {
         core.warning(`Could not get commit messages: ${error}`);
         return '';
     }
+}
+/**
+ * Parse a unified diff into per-file chunks.
+ * Splits by "diff --git a/path b/path" lines.
+ */
+function parsePerFileDiffs(fullDiff) {
+    const chunks = [];
+    const regex = /^diff --git a\/(.+?) b\/\1$/m;
+    const parts = fullDiff.split(/\n(?=diff --git )/);
+    for (const part of parts) {
+        const trimmed = part.trim();
+        if (!trimmed)
+            continue;
+        const match = trimmed.match(regex);
+        if (match) {
+            const path = match[1];
+            // The diff content is everything after the first line (the diff --git line)
+            const rest = trimmed.split('\n').slice(1).join('\n').trim();
+            chunks.push({ path, diff: rest || '(no changes)' });
+        }
+    }
+    return chunks;
+}
+const PER_FILE_DIFF_CAP = 8000; // chars per file to avoid huge single-file context
+/**
+ * Summarize code changes in a single file using AI.
+ */
+async function summarizeFileChanges(groqClient, model, filePath, fileDiff) {
+    const capped = fileDiff.length > PER_FILE_DIFF_CAP
+        ? fileDiff.substring(0, PER_FILE_DIFF_CAP) + '\n... (truncated)'
+        : fileDiff;
+    const prompt = `Summarize the code changes in this file in 2-4 concise bullet points.
+Focus on user-visible behavior, new logic, or notable edits. Be specific.
+
+File: ${filePath}
+
+Diff:
+\`\`\`
+${capped}
+\`\`\`
+
+Output only the bullet points, one per line, starting with "-". No other text.`;
+    try {
+        const completion = await groqClient.chat.completions.create({
+            messages: [{ role: 'user', content: prompt }],
+            model,
+            temperature: 0.3,
+            max_tokens: 256
+        });
+        const text = completion.choices[0]?.message?.content?.trim() || '- No significant changes detected';
+        return text;
+    }
+    catch (error) {
+        core.warning(`Failed to summarize ${filePath}: ${error}`);
+        return `- (Summarization failed: ${error})`;
+    }
+}
+/**
+ * Run summarizer for all files with limited concurrency (3 at a time).
+ */
+async function summarizeAllFiles(groqClient, model, fileDiffs) {
+    const CONCURRENCY = 3;
+    const results = [];
+    for (let i = 0; i < fileDiffs.length; i += CONCURRENCY) {
+        const batch = fileDiffs.slice(i, i + CONCURRENCY);
+        const batchResults = await Promise.all(batch.map(({ path, diff }) => summarizeFileChanges(groqClient, model, path, diff)));
+        results.push(...batchResults);
+    }
+    return fileDiffs
+        .map((fd, i) => `**${fd.path}**:\n${results[i] || ''}`)
+        .join('\n\n');
 }
 function getChangedFiles(previousCommit, currentTag) {
     try {
@@ -40685,12 +40833,28 @@ function getContributors(previousCommit, currentTag) {
         return { current: new Set(), previous: new Set() };
     }
 }
-async function generateReleaseNotes(groqClient, model, diff, commits, changedFiles, tagName, releaseName, previousTag, newContributors, metadata, stats, compatibility, maxTokens, limits, template) {
+async function generateReleaseNotes(groqClient, model, diff, commits, changedFiles, tagName, releaseName, previousTag, newContributors, metadata, stats, compatibility, maxTokens, limits, template, perFileSummaries) {
     // Conservative char limits to stay under Groq input token limits (~6k for on_demand tier)
     const maxDiffLength = limits.diffLimit * 35;
     const maxCommitsLength = limits.commitsLimit * 25;
     const truncatedDiff = diff.length > maxDiffLength ? diff.substring(0, maxDiffLength) + '\n... (truncated)' : diff;
     const truncatedCommits = commits.length > maxCommitsLength ? commits.substring(0, maxCommitsLength) + '\n... (truncated)' : commits;
+    // When per-file summaries exist, use them as primary source and omit or reduce raw diff
+    const hasSummaries = !!perFileSummaries && perFileSummaries.trim().length > 0;
+    const diffBlock = hasSummaries
+        ? `**Per-file change summaries (use these as the primary source for what changed):**
+\`\`\`
+${perFileSummaries}
+\`\`\`
+
+**Git Diff (reference only, summaries above are authoritative):**
+\`\`\`
+${truncatedDiff.substring(0, Math.min(truncatedDiff.length, 2000))}${truncatedDiff.length > 2000 ? '\n... (truncated)' : ''}
+\`\`\``
+        : `**Git Diff (what changed between releases):**
+\`\`\`
+${truncatedDiff || 'No changes detected'}
+\`\`\``;
     const metadataBlock = `Available metadata to use: Release Date ${metadata.releaseDate}, Build ${metadata.commitHash}, Commits ${stats.commitCount}, Contributors ${stats.contributorCount}, Files changed ${stats.filesChanged}${compatibility ? `, Compatibility ${compatibility}` : ''}${newContributors.length > 0 ? `, New contributors: ${newContributors.join(', ')}` : ''}.`;
     const formatInstructions = template
         ? `\n**The FIRST line of your output MUST be: Release Title: [short descriptive phrase, e.g. "add multiple languages"]. Then a blank line. Then follow this template (output raw markdown, no \`\`\` code blocks):**\n${template}\n${metadataBlock}\n`
@@ -40716,7 +40880,7 @@ Short executive summary. Use emojis where appropriate. This release focuses on: 
 End with: Commits: X | Contributors: Y | Files changed: Z (use the actual counts from the data above).${newContributors.length > 0 ? ` Include: New contributors: [list names from data above].` : ''}`;
     const prompt = `You are a technical writer creating in-depth release notes for a software project.
 
-CRITICAL: Only list changes that are explicitly present in the diffs and commit messages below. Do not invent, assume, or infer changes not directly shown. Every change must be directly relevant to the released program.
+CRITICAL: Only list changes that are explicitly present in the diffs, per-file summaries (if provided), and commit messages below. Do not invent, assume, or infer changes not directly shown. Every change must be directly relevant to the released program. When per-file summaries are provided, use them as the primary source for what changed.
 Do not mention documentation, README, CI, or workflow updates unless they materially affect the release contents or behavior.
 
 **Current Release Tag:** ${tagName}
@@ -40727,10 +40891,7 @@ Do not mention documentation, README, CI, or workflow updates unless they materi
 ${changedFiles || 'No files changed'}
 \`\`\`
 
-**Git Diff (what changed between releases):**
-\`\`\`
-${truncatedDiff || 'No changes detected'}
-\`\`\`
+${diffBlock}
 
 **Commit Messages:**
 \`\`\`
@@ -40885,6 +41046,14 @@ async function run() {
         const commitsLimitInput = core.getInput('commits_limit');
         const detailLevel = core.getInput('detail_level');
         const compatibility = core.getInput('compatibility');
+        const showDiffSectionInput = core.getInput('show_diff_section');
+        const showDiffSection = showDiffSectionInput === '' || showDiffSectionInput.toLowerCase() === 'true';
+        const diffSectionLimitInput = core.getInput('diff_section_limit');
+        const summarizerModelInput = core.getInput('summarizer_model');
+        const twoStageCharLimitInput = core.getInput('two_stage_char_limit');
+        const diffSectionLimit = diffSectionLimitInput ? parseInt(diffSectionLimitInput, 10) || 500 : 500;
+        const twoStageCharLimit = twoStageCharLimitInput ? parseInt(twoStageCharLimitInput, 10) : 40000;
+        const summarizerModel = summarizerModelInput?.trim() || model;
         const files = filesInput ? filesInput.split(',').map(f => f.trim()).filter(f => f) : undefined;
         const limits = resolveLimits(detailLevel, diffLimitInput, commitsLimitInput);
         const maxTokens = maxTokensInput ? parseInt(maxTokensInput, 10) || 8000 : 8000;
@@ -40914,11 +41083,31 @@ async function run() {
         if (previousCommit) {
             core.info(`Previous commit: ${previousCommit.substring(0, 7)}`);
         }
+        // Resolve current commit for raw diff / two-stage
+        let currentCommit;
+        try {
+            currentCommit = (0, child_process_1.execSync)(`git rev-parse ${tagName}`, { encoding: 'utf-8' }).trim();
+        }
+        catch {
+            currentCommit = (0, child_process_1.execSync)('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
+        }
         // Get git information using commit SHAs for accurate diffing
         core.info('Collecting git information...');
         const diff = getGitDiff(previousCommit, tagName, limits.diffLimit);
         const commits = getCommitMessages(previousCommit, tagName, limits.commitsLimit);
         const changedFiles = getChangedFiles(previousCommit, tagName);
+        // Two-stage summarization: when diff is under threshold, summarize per-file first
+        let perFileSummaries = null;
+        if (previousCommit && twoStageCharLimit > 0) {
+            const rawDiff = getRawDiff(previousCommit, currentCommit);
+            if (rawDiff && rawDiff.length <= twoStageCharLimit) {
+                const fileDiffs = parsePerFileDiffs(rawDiff);
+                if (fileDiffs.length > 0) {
+                    core.info(`Using two-stage summarization (${fileDiffs.length} files, ${rawDiff.length} chars)`);
+                    perFileSummaries = await summarizeAllFiles(groqClient, summarizerModel, fileDiffs);
+                }
+            }
+        }
         // Get contributors and identify new ones
         core.info('Identifying new contributors...');
         const contributors = getContributors(previousCommit, tagName);
@@ -40938,7 +41127,7 @@ async function run() {
         // Generate release notes using AI
         core.info('Generating release notes with AI...');
         const releaseNameForPrompt = releaseNameInput || tagName;
-        const { notes: releaseNotes, suggestedReleaseTitle } = await generateReleaseNotes(groqClient, model, diff, commits, changedFiles, tagName, releaseNameForPrompt, previousTag, newContributors, metadata, stats, compatibility, maxTokens, limits, bodyTemplate);
+        const { notes: releaseNotes, suggestedReleaseTitle } = await generateReleaseNotes(groqClient, model, diff, commits, changedFiles, tagName, releaseNameForPrompt, previousTag, newContributors, metadata, stats, compatibility, maxTokens, limits, bodyTemplate, perFileSummaries);
         core.info('Generated release notes:');
         core.info(releaseNotes);
         // Use AI-generated title when release_name not provided: "v1.10.3 - add multiple languages"
@@ -40952,13 +41141,18 @@ async function run() {
                 releaseName = tagName;
             }
         }
+        // Append diff section at bottom when enabled
+        let finalBody = releaseNotes;
+        if (showDiffSection) {
+            finalBody = appendDiffSection(releaseNotes, previousTag, tagName, previousCommit, diffSectionLimit, owner, repo);
+        }
         // Create GitHub release
         core.info('Creating GitHub release...');
-        const release = await createRelease(octokit, tagName, releaseName, releaseNotes, draft, prerelease, files, !!(releaseNameInput && releaseNameInput.trim()));
+        const release = await createRelease(octokit, tagName, releaseName, finalBody, draft, prerelease, files, !!(releaseNameInput && releaseNameInput.trim()));
         // Set outputs
         core.setOutput('release_id', release.id.toString());
         core.setOutput('release_url', release.url);
-        core.setOutput('release_notes', releaseNotes);
+        core.setOutput('release_notes', finalBody);
         core.info(`Release created successfully: ${release.url}`);
     }
     catch (error) {
