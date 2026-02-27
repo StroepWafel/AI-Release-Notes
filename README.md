@@ -192,7 +192,7 @@ jobs:
 | `commits_limit` | Max commit messages sent to AI | No | `60` |
 | `detail_level` | Shortcut: `brief`, `standard`, or `detailed` | No | `standard` |
 | `compatibility` | e.g. "Node 18+, Python 3.10+" for Compatibility field | No | - |
-| `show_diff_section` | Append diff section at bottom of release notes | No | `true` |
+| `show_diff_section` | Append diff section at bottom of release notes | No | `false` |
 | `diff_section_limit` | Max lines of inline diff in release body | No | `500` |
 | `summarizer_model` | Model for per-file summarization in two-stage mode (empty = use `model`) | No | - |
 | `two_stage_char_limit` | Use two-stage summarization when diff is under this size (chars). Set `0` to disable | No | `40000` |

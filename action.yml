@@ -54,9 +54,9 @@ inputs:
     description: 'Optional. e.g. "Node 18+, Python 3.10+". Placed in Compatibility field.'
     required: false
   show_diff_section:
-    description: 'Append diff section at bottom of release notes (default true)'
+    description: 'Append diff section at bottom of release notes (default false)'
     required: false
-    default: 'true'
+    default: 'false'
   diff_section_limit:
     description: 'Max lines of inline diff in release body (default 500)'
     required: false

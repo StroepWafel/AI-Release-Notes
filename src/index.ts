@@ -738,7 +738,7 @@ async function run(): Promise<void> {
     const detailLevel = core.getInput('detail_level');
     const compatibility = core.getInput('compatibility');
     const showDiffSectionInput = core.getInput('show_diff_section');
-    const showDiffSection = showDiffSectionInput === '' || showDiffSectionInput.toLowerCase() === 'true';
+    const showDiffSection = showDiffSectionInput.toLowerCase() === 'true';
     const diffSectionLimitInput = core.getInput('diff_section_limit');
     const summarizerModelInput = core.getInput('summarizer_model');
     const twoStageCharLimitInput = core.getInput('two_stage_char_limit');
