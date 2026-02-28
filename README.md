@@ -230,13 +230,13 @@ See [HOW_IT_WORKS.md](HOW_IT_WORKS.md) for an in-depth flow diagram and step-by-
 
 You can use any available Groq model. Recommended options include:
 
-- `openai/gpt-oss-120b` (default) - OpenAI's flagship 120B MoE model, excellent for structured writing
+- `openai/gpt-oss-120b` (default) - OpenAI's flagship open MoE model, excellent for structured writing
 - `llama-3.3-70b-versatile` - Powerful 70B model, great for complex analysis
 - `groq/compound` - Groq's optimized model, good balance of speed and quality
 - `llama-3.1-8b-instant` - Fast and lightweight, good for quick summaries
 - `qwen/qwen3-32b` - Excellent for longer outputs (40k completion tokens)
 
-**Current Default:** `openai/gpt-oss-120b` - OpenAI's flagship 120B MoE model optimized for instruction following and structured output.
+**Current Default:** `openai/gpt-oss-120b` - OpenAI's flagship open-weight MoE model (120B params) with strong benchmark performance for instruction following and structured output.
 
 Check [Groq's API](https://api.groq.com/openai/v1/models) for the latest available models.
 
