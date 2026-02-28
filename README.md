@@ -183,7 +183,7 @@ jobs:
 | `release_name` | Name of the release | No | `tag_name` |
 | `draft` | Create as draft release | No | `false` |
 | `prerelease` | Create as prerelease | No | `false` |
-| `model` | Groq model to use | No | `meta-llama/llama-4-maverick-17b-128e-instruct` |
+| `model` | Groq model to use | No | `openai/gpt-oss-120b` |
 | `previous_tag` | Previous tag to compare against | No | Latest tag |
 | `files` | Comma-separated list of files to attach | No | - |
 | `body_template` | Optional template for release notes structure | No | - |
@@ -230,13 +230,13 @@ See [HOW_IT_WORKS.md](HOW_IT_WORKS.md) for an in-depth flow diagram and step-by-
 
 You can use any available Groq model. Recommended options include:
 
-- `meta-llama/llama-4-maverick-17b-128e-instruct` (default) - Latest Llama 4 model, excellent for structured writing
+- `openai/gpt-oss-120b` (default) - OpenAI's flagship 120B MoE model, excellent for structured writing
 - `llama-3.3-70b-versatile` - Powerful 70B model, great for complex analysis
 - `groq/compound` - Groq's optimized model, good balance of speed and quality
 - `llama-3.1-8b-instant` - Fast and lightweight, good for quick summaries
 - `qwen/qwen3-32b` - Excellent for longer outputs (40k completion tokens)
 
-**Current Default:** `meta-llama/llama-4-maverick-17b-128e-instruct` - Latest Llama 4 model optimized for instruction following and structured output.
+**Current Default:** `openai/gpt-oss-120b` - OpenAI's flagship 120B MoE model optimized for instruction following and structured output.
 
 Check [Groq's API](https://api.groq.com/openai/v1/models) for the latest available models.
 

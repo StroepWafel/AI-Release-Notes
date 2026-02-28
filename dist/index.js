@@ -41040,7 +41040,7 @@ async function run() {
         const releaseNameInput = core.getInput('release_name');
         const draft = core.getBooleanInput('draft');
         const prerelease = core.getBooleanInput('prerelease');
-        const model = core.getInput('model') || 'meta-llama/llama-4-maverick-17b-128e-instruct';
+        const model = core.getInput('model') || 'openai/gpt-oss-120b';
         const previousTagInput = core.getInput('previous_tag');
         const filesInput = core.getInput('files');
         const bodyTemplate = core.getInput('body_template');
