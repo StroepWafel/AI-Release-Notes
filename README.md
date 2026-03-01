@@ -196,6 +196,8 @@ jobs:
 | `diff_section_limit` | Max lines of inline diff in release body | No | `500` |
 | `summarizer_model` | Model for per-file summarization in two-stage mode (empty = use `model`) | No | - |
 | `two_stage_char_limit` | Use two-stage summarization when diff is under this size (chars). Set `0` to disable | No | `40000` |
+| `prompt_append` | Optional text appended to the user prompt (custom instructions, tone, audience, etc.) | No | - |
+| `system_append` | Optional text appended to the system prompt (custom behavior or constraints) | No | - |
 
 ## Outputs
 

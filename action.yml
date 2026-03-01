@@ -68,6 +68,12 @@ inputs:
     description: 'Use two-stage summarization when diff is under this size in chars (default 40000). Set 0 to disable.'
     required: false
     default: '40000'
+  prompt_append:
+    description: 'Optional text appended to the user prompt. Use for custom instructions (e.g. tone, audience, extra context).'
+    required: false
+  system_append:
+    description: 'Optional text appended to the system prompt. Use for custom behavior or constraints.'
+    required: false
 outputs:
   release_id:
     description: 'The ID of the created release'
