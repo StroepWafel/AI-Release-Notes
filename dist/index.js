@@ -40836,7 +40836,7 @@ function getContributors(previousCommit, currentTag) {
         return { current: new Set(), previous: new Set() };
     }
 }
-async function generateReleaseNotes(groqClient, model, diff, commits, changedFiles, tagName, releaseName, previousTag, newContributors, metadata, stats, compatibility, maxTokens, limits, template, perFileSummaries) {
+async function generateReleaseNotes(groqClient, model, diff, commits, changedFiles, tagName, releaseName, previousTag, newContributors, metadata, stats, compatibility, maxTokens, limits, detailLevel, promptAppend, systemAppend, template, perFileSummaries) {
     // Conservative char limits to stay under Groq input token limits (~6k for on_demand tier)
     const maxDiffLength = limits.diffLimit * 35;
     const maxCommitsLength = limits.commitsLimit * 25;
@@ -40881,7 +40881,21 @@ Short executive summary. Use emojis where appropriate. This release focuses on: 
 ## Internal Changes (optional)
 ## Stats
 End with: Commits: X | Contributors: Y | Files changed: Z (use the actual counts from the data above).${newContributors.length > 0 ? ` Include: New contributors: [list names from data above].` : ''}`;
-    const prompt = `You are a technical writer creating in-depth release notes for a software project.
+    const level = detailLevel.toLowerCase();
+    const styleInstructions = level === 'brief'
+        ? 'Be concise. Use high-level bullet points only. Avoid lengthy explanations. Keep each item to one short line.'
+        : level === 'detailed'
+            ? 'Go in-depth on changes - explain what was done and why it matters when the diff/commits support it. Be specific and comprehensive.'
+            : 'Be balanced: clear and informative without being overly verbose. Include key details but avoid lengthy explanations.';
+    let systemContent = level === 'brief'
+        ? 'You are a technical writer creating concise release notes. You analyze code changes and commit messages to produce brief, high-level summaries. Use bullet points. Be terse. Only include what is explicitly supported by the provided diff and commits.'
+        : level === 'detailed'
+            ? 'You are a technical writer specializing in creating detailed, well-structured release notes. You analyze code changes and commit messages to produce comprehensive release notes with clear sections: overview, features, improvements, fixes, breaking changes, dependency updates. Be specific and in-depth. Only include what is explicitly supported by the provided diff and commits.'
+            : 'You are a technical writer creating well-structured release notes. You analyze code changes and commit messages to produce clear release notes with sections: overview, features, improvements, fixes, breaking changes, dependency updates. Be informative but concise. Only include what is explicitly supported by the provided diff and commits.';
+    if (systemAppend?.trim()) {
+        systemContent += `\n\n${systemAppend.trim()}`;
+    }
+    const prompt = `You are a technical writer creating release notes for a software project.
 
 CRITICAL: Only list changes that are explicitly present in the diffs, per-file summaries (if provided), and commit messages below. Do not invent, assume, or infer changes not directly shown. Every change must be directly relevant to the released program. When per-file summaries are provided, use them as the primary source for what changed.
 Do not mention documentation, README, CI, or workflow updates unless they materially affect the release contents or behavior.
@@ -40901,8 +40915,9 @@ ${diffBlock}
 ${truncatedCommits || 'No commits'}
 \`\`\`
 
-Based ONLY on the information above, generate detailed release notes. Go in-depth on changes - explain what was done and why it matters when the diff/commits support it. Omit sections that have no changes.
+Based ONLY on the information above, generate release notes. ${styleInstructions} Omit sections that have no changes.
 ${formatInstructions}
+${promptAppend?.trim() ? `\n\n**Additional instructions:**\n${promptAppend.trim()}` : ''}
 
 Generate the release notes now:`;
     try {
@@ -40910,7 +40925,7 @@ Generate the release notes now:`;
             messages: [
                 {
                     role: 'system',
-                    content: 'You are a technical writer specializing in creating detailed, well-structured release notes. You analyze code changes and commit messages to produce comprehensive release notes with clear sections: overview, features, improvements, fixes, breaking changes, dependency updates. Be specific and in-depth. Only include what is explicitly supported by the provided diff and commits.'
+                    content: systemContent
                 },
                 {
                     role: 'user',
@@ -41054,6 +41069,8 @@ async function run() {
         const diffSectionLimitInput = core.getInput('diff_section_limit');
         const summarizerModelInput = core.getInput('summarizer_model');
         const twoStageCharLimitInput = core.getInput('two_stage_char_limit');
+        const promptAppend = core.getInput('prompt_append');
+        const systemAppend = core.getInput('system_append');
         const diffSectionLimit = diffSectionLimitInput ? parseInt(diffSectionLimitInput, 10) || 500 : 500;
         const twoStageCharLimit = twoStageCharLimitInput ? parseInt(twoStageCharLimitInput, 10) : 40000;
         const summarizerModel = summarizerModelInput?.trim() || model;
@@ -41130,7 +41147,7 @@ async function run() {
         // Generate release notes using AI
         core.info('Generating release notes with AI...');
         const releaseNameForPrompt = releaseNameInput || tagName;
-        const { notes: releaseNotes, suggestedReleaseTitle } = await generateReleaseNotes(groqClient, model, diff, commits, changedFiles, tagName, releaseNameForPrompt, previousTag, newContributors, metadata, stats, compatibility, maxTokens, limits, bodyTemplate, perFileSummaries);
+        const { notes: releaseNotes, suggestedReleaseTitle } = await generateReleaseNotes(groqClient, model, diff, commits, changedFiles, tagName, releaseNameForPrompt, previousTag, newContributors, metadata, stats, compatibility, maxTokens, limits, detailLevel, promptAppend, systemAppend, bodyTemplate, perFileSummaries);
         core.info('Generated release notes:');
         core.info(releaseNotes);
         // Use AI-generated title when release_name not provided: "v1.10.3 - add multiple languages"
