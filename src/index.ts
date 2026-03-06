@@ -1,7 +1,12 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import { execSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import ignore from 'ignore';
 import Groq from 'groq-sdk';
+
+type IgnoreInstance = ReturnType<typeof ignore>;
 
 interface ReleaseNotesResponse {
   features: string[];
@@ -31,6 +36,38 @@ function getSameChannelTags(candidates: string[], currentTag: string): string[] 
     const p = parseTagWithChannel(tag);
     return p && p.channel === parsed.channel;
   });
+}
+
+/**
+ * Load .notesignore from repo root if it exists.
+ * Uses same syntax as .gitignore (glob patterns, # comments, negation with !).
+ * Returns null if file does not exist.
+ */
+function loadNotesIgnore(): IgnoreInstance | null {
+  const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
+  const notesignorePath = path.join(workspace, '.notesignore');
+  if (!fs.existsSync(notesignorePath)) return null;
+  try {
+    const content = fs.readFileSync(notesignorePath, 'utf-8');
+    const ig = ignore();
+    const lines = content.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+    if (lines.length === 0) return null;
+    ig.add(lines);
+    core.info(`Loaded .notesignore with ${lines.length} pattern(s)`);
+    return ig;
+  } catch (error) {
+    core.warning(`Failed to load .notesignore: ${error}`);
+    return null;
+  }
+}
+
+/**
+ * Reassemble a unified diff from per-file chunks.
+ */
+function reassembleDiff(chunks: { path: string; diff: string }[]): string {
+  return chunks
+    .map(({ path: p, diff: d }) => `diff --git a/${p} b/${p}\n${d}`)
+    .join('\n');
 }
 
 async function getPreviousTag(
@@ -229,7 +266,8 @@ function appendDiffSection(
   diffSectionLimit: number,
   owner: string,
   repo: string,
-  includeInlineDiff: boolean
+  includeInlineDiff: boolean,
+  notesStyle?: string
 ): string {
   const compareUrl =
     previousTag && previousCommit
@@ -238,8 +276,14 @@ function appendDiffSection(
 
   if (!compareUrl) return body;
 
-  const lines: string[] = ['', '', '## Changes (diff)', ''];
-  lines.push(`[View full diff on GitHub](${compareUrl})`, '');
+  const isDesqta = (notesStyle || 'github').toLowerCase() === 'desqta';
+  const lines: string[] = isDesqta ? ['', ''] : ['', '', '## Changes (diff)', ''];
+  lines.push(
+    isDesqta
+      ? `Full Changelog: [${previousTag}...${currentTag}](${compareUrl})`
+      : `[View full diff on GitHub](${compareUrl})`,
+    ''
+  );
 
   if (includeInlineDiff) {
     const { diff } = getFullDiff(previousCommit, currentTag, diffSectionLimit);
@@ -502,7 +546,11 @@ async function generateReleaseNotes(
   promptAppend?: string,
   systemAppend?: string,
   template?: string,
-  perFileSummaries?: string | null
+  perFileSummaries?: string | null,
+  notesStyle?: string,
+  productName?: string,
+  repoName?: string,
+  plainLanguage?: boolean
 ): Promise<{ notes: string; suggestedReleaseTitle: string | null }> {
   // Conservative char limits to stay under Groq input token limits (~6k for on_demand tier)
   const maxDiffLength = limits.diffLimit * 35;
@@ -529,9 +577,35 @@ ${truncatedDiff || 'No changes detected'}
 
   const metadataBlock = `Available metadata to use: Release Date ${metadata.releaseDate}, Build ${metadata.commitHash}, Commits ${stats.commitCount}, Contributors ${stats.contributorCount}, Files changed ${stats.filesChanged}${compatibility ? `, Compatibility ${compatibility}` : ''}${newContributors.length > 0 ? `, New contributors: ${newContributors.join(', ')}` : ''}.`;
 
+  const isDesqtaStyle = (notesStyle || 'github').toLowerCase() === 'desqta';
+
   const formatInstructions = template
     ? `\n**The FIRST line of your output MUST be: Release Title: [short descriptive phrase, e.g. "add multiple languages"]. Then a blank line. Then follow this template (output raw markdown, no \`\`\` code blocks):**\n${template}\n${metadataBlock}\n`
-    : `
+    : isDesqtaStyle
+      ? `
+
+**Output format:** The FIRST line of your output MUST be exactly: Release Title: [short descriptive phrase summarizing the main changes]. Keep it concise, lowercase. Then a blank line. Output raw markdown only - do NOT wrap in \`\`\` code blocks. Use this structure with emoji headers (omit sections with no changes):
+
+🎉 What's New
+Major Features
+    - Bullet items for new features
+UI/UX Improvements
+    - Bullet items for UI/UX changes
+
+🐛 Bug Fixes
+    - Bullet items for bug fixes
+
+⚡ Performance
+    - Bullet items for performance improvements
+
+🔧 Technical Improvements
+    - Bullet items for technical/refactoring changes
+
+📝 Notes
+    - Bullet items for other notes (e.g. known issues, reverts)
+
+${metadataBlock}`
+      : `
 
 **Output format:** The FIRST line of your output MUST be exactly: Release Title: [short descriptive phrase summarizing the main changes, e.g. "add multiple languages" or "performance improvements and bug fixes"]. Keep it concise, lowercase. Then a blank line. Then ## Overview (we add the header with Release Date/Build automatically). Output raw markdown only - do NOT wrap in \`\`\` code blocks. Include these sections as applicable:
 
@@ -553,19 +627,28 @@ Short executive summary. Use emojis where appropriate. This release focuses on: 
 End with: Commits: X | Contributors: Y | Files changed: Z (use the actual counts from the data above).${newContributors.length > 0 ? ` Include: New contributors: [list names from data above].` : ''}`;
 
   const level = detailLevel.toLowerCase();
+  const plainLanguageInstructions = plainLanguage
+    ? ' Write in plain language that anyone can understand. Avoid technical jargon and acronyms. Explain what changed in simple terms that a non-technical user could follow. Use everyday words instead of developer terminology.'
+    : '';
   const styleInstructions =
     level === 'brief'
       ? 'Be concise. Use high-level bullet points only. Avoid lengthy explanations. Keep each item to one short line.'
       : level === 'detailed'
         ? 'Go in-depth on changes - explain what was done and why it matters when the diff/commits support it. Be specific and comprehensive.'
         : 'Be balanced: clear and informative without being overly verbose. Include key details but avoid lengthy explanations.';
+  const combinedStyleInstructions = styleInstructions + plainLanguageInstructions;
 
   let systemContent =
     level === 'brief'
       ? 'You are a technical writer creating concise release notes. You analyze code changes and commit messages to produce brief, high-level summaries. Use bullet points. Be terse. Only include what is explicitly supported by the provided diff and commits.'
       : level === 'detailed'
         ? 'You are a technical writer specializing in creating detailed, well-structured release notes. You analyze code changes and commit messages to produce comprehensive release notes with clear sections: overview, features, improvements, fixes, breaking changes, dependency updates. Be specific and in-depth. Only include what is explicitly supported by the provided diff and commits.'
-        : 'You are a technical writer creating well-structured release notes. You analyze code changes and commit messages to produce clear release notes with sections: overview, features, improvements, fixes, breaking changes, dependency updates. Be informative but concise. Only include what is explicitly supported by the provided diff and commits.';
+        : isDesqtaStyle
+          ? 'You are a technical writer creating release notes in a categorized format with emoji headers (What\'s New, Bug Fixes, Performance, Technical Improvements, Notes). You analyze code changes and commit messages to produce clear, scannable release notes. Group changes into the appropriate sections. Use indented bullet points. Only include what is explicitly supported by the provided diff and commits.'
+          : 'You are a technical writer creating well-structured release notes. You analyze code changes and commit messages to produce clear release notes with sections: overview, features, improvements, fixes, breaking changes, dependency updates. Be informative but concise. Only include what is explicitly supported by the provided diff and commits.';
+  if (plainLanguage) {
+    systemContent += ' Write in plain, accessible language. Avoid jargon. Explain changes so that a non-technical reader can understand what is new or different.';
+  }
   if (systemAppend?.trim()) {
     systemContent += `\n\n${systemAppend.trim()}`;
   }
@@ -590,7 +673,7 @@ ${diffBlock}
 ${truncatedCommits || 'No commits'}
 \`\`\`
 
-Based ONLY on the information above, generate release notes. ${styleInstructions} Omit sections that have no changes.
+Based ONLY on the information above, generate release notes. ${combinedStyleInstructions} Omit sections that have no changes.
 ${formatInstructions}
 ${promptAppend?.trim() ? `\n\n**Additional instructions:**\n${promptAppend.trim()}` : ''}
 
@@ -628,20 +711,32 @@ Generate the release notes now:`;
       notes = notes.replace(/^Release Title:\s*.+?\n?\n?/im, '');
     }
     // Prepend header with actual metadata; use AI-generated title when available
-    const displayName = suggestedReleaseTitle ? `${tagName} - ${suggestedReleaseTitle}` : releaseName;
-    const headerLines = [
-      `${tagName} — ${displayName}`,
-      '',
-      `Release Date: ${metadata.releaseDate}`,
-      `Build: ${metadata.commitHash}`,
-      ...(compatibility ? [`Compatibility: ${compatibility}`] : []),
-      '',
-      ''
-    ];
-    const header = headerLines.join('\n');
-    // Strip any header AI may have generated (lines before ## Overview)
-    const overviewIndex = notes.search(/^## Overview/m);
-    const body = overviewIndex >= 0 ? notes.substring(overviewIndex) : notes;
+    let header: string;
+    let body: string;
+
+    if (isDesqtaStyle) {
+      const prodName = (productName || '').trim() || repoName || 'Release';
+      const versionPart = tagName.replace(/^v/, '');
+      header = `${prodName} v${versionPart} Release Notes\n\n`;
+      // For DesQTA, body is the notes after the Release Title line (already stripped above)
+      body = notes;
+    } else {
+      const displayName = suggestedReleaseTitle ? `${tagName} - ${suggestedReleaseTitle}` : releaseName;
+      const headerLines = [
+        `${tagName} — ${displayName}`,
+        '',
+        `Release Date: ${metadata.releaseDate}`,
+        `Build: ${metadata.commitHash}`,
+        ...(compatibility ? [`Compatibility: ${compatibility}`] : []),
+        '',
+        ''
+      ];
+      header = headerLines.join('\n');
+      // Strip any header AI may have generated (lines before ## Overview)
+      const overviewIndex = notes.search(/^## Overview/m);
+      body = overviewIndex >= 0 ? notes.substring(overviewIndex) : notes;
+    }
+
     return { notes: header + body, suggestedReleaseTitle };
   } catch (error) {
     core.setFailed(`Failed to generate release notes: ${error}`);
@@ -771,6 +866,9 @@ async function run(): Promise<void> {
     const twoStageCharLimitInput = core.getInput('two_stage_char_limit');
     const promptAppend = core.getInput('prompt_append');
     const systemAppend = core.getInput('system_append');
+    const notesStyle = core.getInput('notes_style') || 'github';
+    const productName = core.getInput('product_name');
+    const plainLanguage = core.getBooleanInput('plain_language');
 
     const diffSectionLimit = diffSectionLimitInput ? parseInt(diffSectionLimitInput, 10) || 500 : 500;
     const twoStageCharLimit = twoStageCharLimitInput ? parseInt(twoStageCharLimitInput, 10) : 40000;
@@ -820,18 +918,53 @@ async function run(): Promise<void> {
       currentCommit = execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
     }
 
+    // Load .notesignore if present (gitignore-style exclusion for release note generation)
+    const notesIgnore = loadNotesIgnore();
+
     // Get git information using commit SHAs for accurate diffing
     core.info('Collecting git information...');
-    const diff = getGitDiff(previousCommit, tagName, limits.diffLimit);
+    let diff: string;
+    let changedFilesRaw = getChangedFiles(previousCommit, tagName);
+
+    if (notesIgnore) {
+      // Filter changed files by .notesignore
+      const allPaths = changedFilesRaw.trim().split('\n').filter(f => f.trim());
+      const filteredPaths = allPaths.filter(p => !notesIgnore.ignores(p));
+      const changedFiles = filteredPaths.join('\n');
+      core.info(`Filtered by .notesignore: ${allPaths.length} -> ${filteredPaths.length} files`);
+
+      if (previousCommit) {
+        const rawDiff = getRawDiff(previousCommit, currentCommit);
+        const fileChunks = parsePerFileDiffs(rawDiff);
+        const filteredChunks = fileChunks.filter(c => !notesIgnore.ignores(c.path));
+        const reassembled = reassembleDiff(filteredChunks);
+        const lines = reassembled.trim().split('\n');
+        const limit = Math.min(limits.diffLimit, lines.length);
+        const truncated = lines.slice(0, limit).join('\n') + (lines.length > limit ? '\n... (truncated)' : '');
+        diff = `File changes summary:\n${filteredPaths.join('\n')}\n\nSample code changes:\n${truncated || '(no changes)'}`;
+      } else {
+        const summary = execSync(`git log --oneline ${currentCommit}`, { encoding: 'utf-8' });
+        const summaryLines = summary.trim().split('\n').slice(0, limits.diffLimit).join('\n');
+        diff = `Summary:\n${summaryLines}\n\nFile changes:\n${filteredPaths.join('\n') || '(none)'}`;
+      }
+
+      changedFilesRaw = filteredPaths.join('\n');
+    } else {
+      diff = getGitDiff(previousCommit, tagName, limits.diffLimit);
+    }
+
+    const changedFiles = changedFilesRaw;
     const commits = getCommitMessages(previousCommit, tagName, limits.commitsLimit);
-    const changedFiles = getChangedFiles(previousCommit, tagName);
 
     // Two-stage summarization: when diff is under threshold, summarize per-file first
     let perFileSummaries: string | null = null;
     if (previousCommit && twoStageCharLimit > 0) {
       const rawDiff = getRawDiff(previousCommit, currentCommit);
       if (rawDiff && rawDiff.length <= twoStageCharLimit) {
-        const fileDiffs = parsePerFileDiffs(rawDiff);
+        let fileDiffs = parsePerFileDiffs(rawDiff);
+        if (notesIgnore) {
+          fileDiffs = fileDiffs.filter(c => !notesIgnore!.ignores(c.path));
+        }
         if (fileDiffs.length > 0) {
           core.info(`Using two-stage summarization (${fileDiffs.length} files, ${rawDiff.length} chars)`);
           perFileSummaries = await summarizeAllFiles(groqClient, summarizerModel, fileDiffs);
@@ -883,7 +1016,11 @@ async function run(): Promise<void> {
       promptAppend,
       systemAppend,
       bodyTemplate,
-      perFileSummaries
+      perFileSummaries,
+      notesStyle,
+      productName,
+      repo,
+      plainLanguage
     );
 
     core.info('Generated release notes:');
@@ -909,7 +1046,8 @@ async function run(): Promise<void> {
       diffSectionLimit,
       owner,
       repo,
-      showDiffSection
+      showDiffSection,
+      notesStyle
     );
 
     // Create GitHub release

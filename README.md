@@ -17,6 +17,8 @@ To host your own copy of the action, see [SETUP.md](SETUP.md).
 - 🎯 **Smart Categorization**: Organizes changes into Features, Improvements, Bug Fixes, Breaking Changes, etc.
 - 📦 **File Attachments**: Supports attaching files to releases
 - 🔄 **Auto-Update**: Updates existing releases if they already exist
+- 📋 **.notesignore**: Exclude files from AI analysis (gitignore-style) while still including them in the release
+- 🎨 **Notes Styles**: Choose between GitHub-style or DesQTA-style (emoji headers, categorized sections) release notes
 
 ## Usage
 
@@ -198,6 +200,24 @@ jobs:
 | `two_stage_char_limit` | Use two-stage summarization when diff is under this size (chars). Set `0` to disable | No | `40000` |
 | `prompt_append` | Optional text appended to the user prompt (custom instructions, tone, audience, etc.) | No | - |
 | `system_append` | Optional text appended to the system prompt (custom behavior or constraints) | No | - |
+| `notes_style` | Release notes format: `github` (default) or `desqta` (emoji headers, categorized sections) | No | `github` |
+| `product_name` | Product name for DesQTA-style title (defaults to repo name) | No | - |
+| `plain_language` | Use simple, jargon-free language that the average person can understand | No | `false` |
+
+## .notesignore
+
+If a `.notesignore` file exists in your repo root, files matching its patterns are **excluded from AI analysis** when generating release notes. The release itself and attached assets are unaffected—only what the AI sees in diffs and changed files is filtered.
+
+- Uses the same syntax as `.gitignore` (glob patterns, `#` comments, negation with `!`)
+- Example: exclude `dist/`, `*.lock`, `node_modules/` from release note generation
+- Place `.notesignore` in the repository root (same level as `.gitignore`)
+
+## Release Notes Styles
+
+- **`github`** (default): Overview, What's New, Improvements, Fixes, Breaking Changes, etc.
+- **`desqta`**: Emoji headers (What's New, Bug Fixes, Performance, Technical Improvements, Notes) with indented bullet lists. Use `product_name` to customize the title (e.g. `DesQTA v1.0.0-RC-7 Release Notes`).
+
+**`plain_language`**: When `true`, the AI uses simple, jargon-free language that non-technical users can understand. Avoids developer terminology in favor of everyday words.
 
 ## Outputs
 

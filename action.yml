@@ -74,6 +74,17 @@ inputs:
   system_append:
     description: 'Optional text appended to the system prompt. Use for custom behavior or constraints.'
     required: false
+  notes_style:
+    description: 'Release notes format: github (default) or desqta (emoji headers, categorized sections)'
+    required: false
+    default: 'github'
+  product_name:
+    description: 'Product name for DesQTA-style title (defaults to repo name)'
+    required: false
+  plain_language:
+    description: 'Use simple, jargon-free language that the average person can understand (default false)'
+    required: false
+    default: 'false'
 outputs:
   release_id:
     description: 'The ID of the created release'
