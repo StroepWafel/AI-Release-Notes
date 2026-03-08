@@ -3,7 +3,7 @@
 # Supports both: (from_tag + to_tag) OR legacy (version only, auto-detects previous)
 name: Create Release Notes
 
-# on: COMMENTED TO DISABLE
+# on:
   workflow_dispatch:
     inputs:
       version:
