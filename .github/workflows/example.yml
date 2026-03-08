@@ -1,6 +1,6 @@
 name: Example Release Workflow
 
-# on: COMMENTED TO DISABLE
+on:
   workflow_dispatch:
     inputs:
       version:
