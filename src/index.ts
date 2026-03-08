@@ -588,21 +588,21 @@ ${truncatedDiff || 'No changes detected'}
 
 🎉 What's New
 Major Features
-    - Bullet items for new features
+ - Bullet items for new features
 UI/UX Improvements
-    - Bullet items for UI/UX changes
+ - Bullet items for UI/UX changes
 
 🐛 Bug Fixes
-    - Bullet items for bug fixes
+ - Bullet items for bug fixes
 
 ⚡ Performance
-    - Bullet items for performance improvements
+ - Bullet items for performance improvements
 
 🔧 Technical Improvements
-    - Bullet items for technical/refactoring changes
+ - Bullet items for technical/refactoring changes
 
 📝 Notes
-    - Bullet items for other notes (e.g. known issues, reverts)
+ - Bullet items for other notes (e.g. known issues, reverts)
 
 ${metadataBlock}`
       : `
