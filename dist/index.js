@@ -41695,7 +41695,7 @@ ${truncatedDiff || 'No changes detected'}
         : isDesqtaStyle
             ? `
 
-**Output format:** The FIRST line of your output MUST be exactly: Release Title: [short descriptive phrase summarizing the main changes]. Keep it concise, lowercase. Then a blank line. Output raw markdown only - do NOT wrap in \`\`\` code blocks. Use this structure with emoji headers (omit sections with no changes):
+**Output format:** The FIRST line of your output MUST be exactly: Release Title: [short descriptive phrase summarizing the main changes]. Keep it concise, lowercase. Then a blank line. Output raw markdown only - do NOT wrap in \`\`\` code blocks. Use this structure with emoji headers. You do NOT need to fill all sections—omit any that are unnecessary (e.g. for a patch release, omit What's New / Major Features if there are only bug fixes):
 
 🎉 What's New
 Major Features
@@ -41718,7 +41718,7 @@ UI/UX Improvements
 ${metadataBlock}`
             : `
 
-**Output format:** The FIRST line of your output MUST be exactly: Release Title: [short descriptive phrase summarizing the main changes, e.g. "add multiple languages" or "performance improvements and bug fixes"]. Keep it concise, lowercase. Then a blank line. Then ## Overview (we add the header with Release Date/Build automatically). Output raw markdown only - do NOT wrap in \`\`\` code blocks. Include these sections as applicable:
+**Output format:** The FIRST line of your output MUST be exactly: Release Title: [short descriptive phrase summarizing the main changes, e.g. "add multiple languages" or "performance improvements and bug fixes"]. Keep it concise, lowercase. Then a blank line. Then ## Overview (we add the header with Release Date/Build automatically). Output raw markdown only - do NOT wrap in \`\`\` code blocks. You do NOT need to fill all sections—omit any that are unnecessary (e.g. for a patch release, omit What's New if there are only bug fixes). Include these sections as applicable:
 
 ## Overview
 Short executive summary. Use emojis where appropriate. This release focuses on: [bullet points]
@@ -41751,8 +41751,8 @@ End with: Commits: X | Contributors: Y | Files changed: Z (use the actual counts
         : level === 'detailed'
             ? 'You are a technical writer specializing in creating detailed, well-structured release notes. You analyze code changes and commit messages to produce comprehensive release notes with clear sections: overview, features, improvements, fixes, breaking changes, dependency updates. Be specific and in-depth. Only include what is explicitly supported by the provided diff and commits.'
             : isDesqtaStyle
-                ? 'You are a technical writer creating release notes in a categorized format with emoji headers (What\'s New, Bug Fixes, Performance, Technical Improvements, Notes). You analyze code changes and commit messages to produce clear, scannable release notes. Group changes into the appropriate sections. Use indented bullet points. Only include what is explicitly supported by the provided diff and commits.'
-                : 'You are a technical writer creating well-structured release notes. You analyze code changes and commit messages to produce clear release notes with sections: overview, features, improvements, fixes, breaking changes, dependency updates. Be informative but concise. Only include what is explicitly supported by the provided diff and commits.';
+                ? 'You are a technical writer creating release notes in a categorized format with emoji headers (What\'s New, Bug Fixes, Performance, Technical Improvements, Notes). You analyze code changes and commit messages to produce clear, scannable release notes. Group changes into the appropriate sections. Omit sections that don\'t apply (e.g. no Major Features for a patch release). Use indented bullet points. Only include what is explicitly supported by the provided diff and commits.'
+                : 'You are a technical writer creating well-structured release notes. You analyze code changes and commit messages to produce clear release notes with sections: overview, features, improvements, fixes, breaking changes, dependency updates. Omit sections that don\'t apply (e.g. no What\'s New for a patch). Be informative but concise. Only include what is explicitly supported by the provided diff and commits.';
     if (plainLanguage) {
         systemContent += ' Write in plain, accessible language. Avoid jargon. Explain changes so that a non-technical reader can understand what is new or different.';
     }
@@ -41779,7 +41779,7 @@ ${diffBlock}
 ${truncatedCommits || 'No commits'}
 \`\`\`
 
-Based ONLY on the information above, generate release notes. ${combinedStyleInstructions} Omit sections that have no changes.
+Based ONLY on the information above, generate release notes. ${combinedStyleInstructions} Omit sections that have no changes or that are unnecessary for this release (e.g. omit Major Features / What's New for a patch).
 ${formatInstructions}
 ${promptAppend?.trim() ? `\n\n**Additional instructions:**\n${promptAppend.trim()}` : ''}
 
