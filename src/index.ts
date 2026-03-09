@@ -708,7 +708,8 @@ Generate the release notes now:`;
     const titleMatch = notes.match(/^Release Title:\s*(.+?)(?:\n|$)/im);
     if (titleMatch) {
       suggestedReleaseTitle = titleMatch[1].trim();
-      notes = notes.replace(/^Release Title:\s*.+?\n?\n?/im, '');
+      // Use .+ (greedy) so we remove the full title line—.+? was matching only 1 char and cutting off the first letter
+      notes = notes.replace(/^Release Title:\s*.+(?:\n\n?)?/im, '');
     }
     // Prepend header with actual metadata; use AI-generated title when available
     let header: string;
