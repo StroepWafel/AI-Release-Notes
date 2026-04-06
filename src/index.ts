@@ -16,6 +16,10 @@ interface ReleaseNotesResponse {
   other: string[];
 }
 
+/** Appended to every release body; GitHub renders <sub> as small text. */
+const RELEASE_NOTES_ATTRIBUTION =
+  '\n\n<sub>created with https://github.com/StroepWafel/AI-Release-Notes</sub>';
+
 /**
  * Parse tag for x.x.x-channel format (semantic versioning with channel).
  * Returns { version, channel } or null if not in that format.
@@ -1039,17 +1043,18 @@ async function run(): Promise<void> {
     }
 
     // Append diff section: always add compare link; inline diff only when enabled
-    const finalBody = appendDiffSection(
-      releaseNotes,
-      previousTag,
-      tagName,
-      previousCommit,
-      diffSectionLimit,
-      owner,
-      repo,
-      showDiffSection,
-      notesStyle
-    );
+    const finalBody =
+      appendDiffSection(
+        releaseNotes,
+        previousTag,
+        tagName,
+        previousCommit,
+        diffSectionLimit,
+        owner,
+        repo,
+        showDiffSection,
+        notesStyle
+      ) + RELEASE_NOTES_ATTRIBUTION;
 
     // Create GitHub release
     core.info('Creating GitHub release...');
